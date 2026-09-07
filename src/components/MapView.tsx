@@ -17,20 +17,22 @@ interface HereDefaultLayers {
 
 interface HereMap {
   addObject(obj: unknown): void
-  setViewBounds(rect: unknown): void
+  /** 3.1 视野适配入口（运行时源码核实：无 setViewBounds，经 ViewModel.setLookAtData({bounds})） */
+  getViewModel(): { setLookAtData(data: { bounds?: unknown; zoom?: number; tilt?: number; heading?: number }): void }
   dispose(): void
 }
 
 interface HereNS {
+  /** 地图实例本体是顶层 H.Map（T8 手动验收抓出 H.map.Map 误写——H.map.* 是地图对象命名空间） */
+  Map: new (
+    el: HTMLElement,
+    layer: unknown,
+    opts?: { zoom?: number; center?: { lat: number; lng: number } },
+  ) => HereMap
   service: {
     Platform: new (opts: { apikey: string }) => { createDefaultLayers: () => HereDefaultLayers }
   }
   map: {
-    Map: new (
-      el: HTMLElement,
-      layer: unknown,
-      opts?: { zoom?: number; center?: { lat: number; lng: number } },
-    ) => HereMap
     Polyline: new (
       lineString: unknown,
       opts?: { style?: { strokeColor?: string; lineWidth?: number } },
@@ -65,7 +67,7 @@ export default function MapView({ trace, derived, mapStatus, apikey }: MapViewPr
     if (!here || !hostRef.current) return
     const platform = new here.service.Platform({ apikey })
     const layers = platform.createDefaultLayers()
-    const map = new here.map.Map(hostRef.current, layers.vector.normal.map, {
+    const map = new here.Map(hostRef.current, layers.vector.normal.map, {
       zoom: 14,
       center: { lat: trace[0]?.lat ?? 49.01, lng: trace[0]?.lng ?? 8.44 },
     })
@@ -90,7 +92,8 @@ export default function MapView({ trace, derived, mapStatus, apikey }: MapViewPr
       )
     }
 
-    // 视野适配：H.geo.Rect 构造参数顺序 = (top, left, bottom, right)，即 (north, west, south, east)
+    // 视野适配：H.geo.Rect 构造参数顺序 = (top, left, bottom, right)，即 (north, west, south, east)；
+    // 3.1 经 ViewModel.setLookAtData({bounds}) 生效（运行时源码核实无 setViewBounds——计划此处笔误）
     let north = -Infinity
     let south = Infinity
     let west = Infinity
@@ -104,7 +107,8 @@ export default function MapView({ trace, derived, mapStatus, apikey }: MapViewPr
       if (p[1] < west) west = p[1]
       if (p[1] > east) east = p[1]
     }
-    if (Number.isFinite(north)) map.setViewBounds(new here.geo.Rect(north, west, south, east))
+    if (Number.isFinite(north))
+      map.getViewModel().setLookAtData({ bounds: new here.geo.Rect(north, west, south, east) })
 
     return () => {
       behavior.dispose()
