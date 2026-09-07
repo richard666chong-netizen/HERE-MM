@@ -506,3 +506,8 @@ export function nearestOnPolyline(p: LatLng, path: LatLng[]): { foot: LatLng; di
   - **T8 测试机制**：vi.stubEnv 空 key 走同步 fallback（防 .env 真 key 泄入 + script 注入绕过 fetch 桩 + 8s>5s 超时）+ 清除缓存按钮落点（spec 顶栏三件套）
   - **fetch 豁免边界放宽**：一切测试代码豁免静态 import public/（原「契约测试唯一豁免」与 T2/T5 单测自相矛盾）
   - 驳回 1 条：「SDK 重试按钮无落点」——loader 已有超时重试，重试按钮 UI 非 Step1 字面范围
+
+## Errata（实现期运行时实证修正）
+
+- **setViewBounds 在 HERE 3.1 运行时不存在**（计划修订版 T7 写错了）：实现者 grep 实证后改用 `map.getViewModel().setLookAtData({ bounds: H.geo.Rect })`；另有 `H.Map` 构造签名微调。两处修正有运行时像素级验收背书（task-8-report.md 留痕）。
+- T4 直方图测试数据括号序列 `[0,10,19,30,38]` 与期望 `[3,2]` 在计划内自相矛盾（19 落在 bin 边界）——实现侧裁决为 `[0,10,18,30,38]`，独立手算验证正确。
