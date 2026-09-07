@@ -11,8 +11,9 @@ export function haversineM(a: LatLng, b: LatLng): number {
   return 2 * R_EARTH_M * Math.asin(Math.sqrt(s))
 }
 
-/** 局部平面近似（段中点为原点的等距圆柱投影）——城市尺度段长(<100m)误差毫米级 */
-function toLocalM(p: LatLng, origin: LatLng): [number, number] {
+/** 局部平面近似（origin 为原点的等距圆柱投影）——城市尺度段长(<100m)误差毫米级。
+ *  Task 7 起导出：SvgFallback 以 bbox 中心为原点复用同一投影，避免两套实现分叉。 */
+export function toLocalM(p: LatLng, origin: LatLng): [number, number] {
   const mPerDegLat = 111132.92 - 559.82 * Math.cos(2 * origin[0] * DEG)
   const mPerDegLng = 111412.84 * Math.cos(origin[0] * DEG)
   return [(p[1] - origin[1]) * mPerDegLng, (p[0] - origin[0]) * mPerDegLat]
