@@ -34,8 +34,8 @@
 |---|---|---|
 | 框架 | Vite + React 19 + TypeScript | 与既有技术舒适区一致，脚手架最快 |
 | 地图 | HERE Maps API for JavaScript，script 标签加载 + 自封装 loader | 零 npm 依赖；网络降级完全可控（本机 ISP 有 HTTPS 透明劫持前科） |
-| 匹配 | HERE Route Matching API v8：`POST https://router.hereapi.com/v8/match`，apikey 认证，请求体为 GPS 轨迹 | 官方 REST 产品，批量单次调用 |
-| Mock | 本地 fixture 按 v8/match 响应格式构造；首次 live 成功后录制回写 | 无 key 可开发，断网可演示 |
+| 匹配 | HERE Routing API v8 **Route Import**：`POST https://router.hereapi.com/v8/import?return=polyline,summary&transportMode=car`，apikey 认证，JSON body `{"trace":[{lat,lng},...]}`（2–50000 点） | 2026-09-07 实测修正：Route Matching API v8（`routematching.hereapi.com/v8/match/routelinks`，CSV body，`mode=car`）自 2025-03-15 起**仅 Enterprise Plan** 可用，Base Plan key 请求返回 429 + `X-RateLimit-Limit: 0`；Route Import 是 Base Plan 内的等价轨迹匹配，返回匹配路线 polyline（flexible polyline，需解码），偏差由 app 自算 |
+| Mock | 本地 fixture 按 v8/import 响应格式构造；2026-09-07 已用真实 key 录制 drive_0011 响应存 `data/fixtures/`，脚手架落地后迁入仓库 | 无 key 可开发，断网可演示 |
 | 缓存 | localStorage（浏览器持久）+ fixture（随仓库）双层 | 演示永远可离线复现 |
 | 图表 | Recharts | 偏差统计曲线 |
 | 密钥 | `import.meta.env.VITE_HERE_KEY`，`.env` 文件（gitignore） | 沿用成熟模式 |
@@ -59,8 +59,9 @@ public/sample/here/2011_09_30_drive_0033.json   (trajectory_light.json 格式, W
 MatchService.match(driveId)
   ├─ 缓存命中(localStorage) → 直接返回
   └─ 未命中 → 有 VITE_HERE_KEY ? HereRouterClient(live) : MockService(fixture)
-       ↓ 响应(v8/match 原始格式)
-derived 预计算: 每轨迹点 → { matchedLatLng, linkId, deviationM, headingDeg, speedMps }
+       ↓ 响应(v8/import 原始格式: routes[].sections[].polyline + summary)
+derived 预计算: 每轨迹点 → { matchedLatLng(点到匹配 polyline 的垂足投影), deviationM, headingDeg, speedMps }
+              // 注意: import API 不提供逐点 linkId/confidence（那是 Route Matching API 的能力，Enterprise only）
   ↓
 视图组件只消费 derived —— 回放层零实时计算
 ```
