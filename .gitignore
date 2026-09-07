@@ -1,0 +1,11 @@
+# Personal application documents — never enter git history
+# (repo may be published as interview portfolio)
+application/
+
+# Local data (KITTI raw + fetch scripts; demo trajectories live in public/sample/here/)
+data/
+
+# Node / Vite (added in Step0 scaffold)
+node_modules/
+dist/
+.env
