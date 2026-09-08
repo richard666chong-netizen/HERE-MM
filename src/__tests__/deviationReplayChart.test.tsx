@@ -38,9 +38,12 @@ describe('DeviationReplayChart', () => {
     )
     // tCur=4.0 → tQ=4.0 → 窗口 [3.5, 4.0] = 6 点（双端闭、步长 0.1）
     expect(container.querySelector('[data-testid="replay-deviation"]')!.closest('aside')!.getAttribute('data-length')).toBe('6')
+    expect(container.querySelector('[data-testid="replay-deviation"]')!.closest('aside')!.getAttribute('data-from')).toBe('3.5')
     rerender(<DeviationReplayChart trace={trace} derived={derived} index={39} windowSec={0.5} />)
     // tCur=3.9 → tQ=3.5 → 窗口 [3.0, 3.5] = 6 点（量化生效）
     expect(container.querySelector('[data-testid="replay-deviation"]')!.closest('aside')!.getAttribute('data-length')).toBe('6')
+    // data-from 锁死 0.5s 量化：未量化实现 from = tCur - win = 3.4（'3.4' ≠ '3.0'），断言可证伪
+    expect(container.querySelector('[data-testid="replay-deviation"]')!.closest('aside')!.getAttribute('data-from')).toBe('3.0')
   })
 
   it('empty derived renders placeholder without chart', () => {

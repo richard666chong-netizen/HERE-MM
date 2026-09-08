@@ -63,6 +63,7 @@ export default function DeviationReplayChart({ trace, derived, index, windowSec 
   const tCur = trace.length > 0 ? trace[Math.min(i, trace.length - 1)].timestamp : 0
   const tQ = Math.floor(tCur * 2) / 2 // 0.5s 档量化：图表重渲 ≤10 次/秒（5x），读数仍全速
   const data = useMemo(() => sliceWindow(series, tQ, win), [series, tQ, win])
+  const from = Math.max(0, tQ - win) // 计算一次，XAxis domain 与 data-from 测试钩子共用（不可分叉）
 
   if (derived.length === 0 || trace.length === 0) {
     return <p style={{ fontSize: 13, color: '#6b7280' }}>暂无偏差数据</p>
@@ -71,6 +72,7 @@ export default function DeviationReplayChart({ trace, derived, index, windowSec 
   return (
     <aside
       data-length={data.length}
+      data-from={from.toFixed(1)}
       style={{ width: '100%', padding: '0.75rem', border: '1px solid #e5e7eb', borderRadius: 8 }}
     >
       <h2 style={{ fontSize: 13, fontWeight: 600, color: '#374151', margin: '0 0 0.25rem' }}>
@@ -79,7 +81,7 @@ export default function DeviationReplayChart({ trace, derived, index, windowSec 
       <div data-testid="replay-deviation" style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>
         {derived[i].deviationM.toFixed(1)} m
       </div>
-      <ReplayAreaChart data={data} from={Math.max(0, tQ - win)} to={Math.max(tQ, win)} />
+      <ReplayAreaChart data={data} from={from} to={Math.max(tQ, win)} />
     </aside>
   )
 }
