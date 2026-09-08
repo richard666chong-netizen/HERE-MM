@@ -95,4 +95,51 @@ describe('App (Step1 编排壳)', () => {
     await screen.findByText('MOCK')
     expect(localStorage.getItem(cacheKey(driveId))).not.toBeNull()
   })
+
+  it('demo tab: replay bar + linked chart + car marker; switching back pauses', async () => {
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1)) // 不放帧：断言与时间解耦
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    render(<App />)
+    await screen.findByText('MOCK')
+
+    // 默认工程分析模式：tab 选中态 + 无回放条 + StatsPanel 在
+    expect(screen.getByRole('tab', { name: '工程分析模式' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByRole('slider')).toBeNull()
+    expect(screen.getByText('偏差分布直方图')).toBeTruthy()
+
+    // 切到客户演示模式
+    fireEvent.click(screen.getByRole('tab', { name: '客户演示模式' }))
+    expect(screen.getByRole('tab', { name: '客户演示模式' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByText('偏差分布直方图')).toBeNull() // 侧栏换成回放曲线
+    const trace = trace0033 as unknown as TrajPoint[]
+    const slider = screen.getByRole('slider') as HTMLInputElement
+    expect(Number(slider.max)).toBe(trace.length - 1) // 1593
+    const totalSec = trace[trace.length - 1].timestamp
+    expect(screen.getByTestId('replay-time').textContent).toContain(`${totalSec.toFixed(1)}s`)
+    expect(screen.getByTestId('replay-deviation').textContent).toContain('m')
+    expect(screen.getByTestId('car-marker')).toBeTruthy() // SVG 兜底路径车标在
+
+    // 播放按钮同步翻转；倍速按钮 aria-pressed
+    fireEvent.click(screen.getByRole('button', { name: '播放' }))
+    expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '2x' }))
+    expect(screen.getByRole('button', { name: '2x' }).getAttribute('aria-pressed')).toBe('true')
+
+    // 播放中拖动进度条：pointerdown 即暂停（防 rAF 前推漂移）、松手自动续播；
+    // 拖动后时间读数联动（期望值取自导入数据，不硬编码）
+    fireEvent.pointerDown(slider)
+    expect(screen.getByRole('button', { name: '播放' })).toBeTruthy() // 已暂停
+    fireEvent.change(slider, { target: { value: '100' } })
+    const t100 = trace[100].timestamp
+    expect(screen.getByTestId('replay-time').textContent).toContain(`${t100.toFixed(1)}s`)
+    fireEvent.pointerUp(slider)
+    expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy() // 拖动前在播放 → 续播
+
+    // 切回工程分析：回放条消失并已暂停；再切回来按钮为「播放」（进度保留在 100）
+    fireEvent.click(screen.getByRole('tab', { name: '工程分析模式' }))
+    expect(screen.queryByRole('slider')).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: '客户演示模式' }))
+    expect(screen.getByRole('button', { name: '播放' })).toBeTruthy()
+    expect((screen.getByRole('slider') as HTMLInputElement).value).toBe('100')
+  })
 })

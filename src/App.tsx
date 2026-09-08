@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import DeviationReplayChart from './components/DeviationReplayChart'
 import MapView from './components/MapView'
+import ReplayBar from './components/ReplayBar'
 import SourceBadge from './components/SourceBadge'
 import StatsPanel from './components/StatsPanel'
+import { usePlayback } from './hooks/usePlayback'
 import { derive } from './lib/derive'
 import { matchService, writeCache } from './lib/fixtureStore'
 import { loadHereMaps } from './lib/hereLoader'
@@ -9,16 +12,23 @@ import type { CacheEntry, DerivedPoint, TrajPoint } from './types'
 
 const DRIVE_IDS = ['2011_09_30_drive_0033', '2011_09_26_drive_0011'] // 顶栏下拉顺序 0033/0011
 
+// spec L45 双模式：工程分析（静态对比）/ 客户演示（回放）
+const MODES = [
+  { id: 'analysis', label: '工程分析模式' },
+  { id: 'demo', label: '客户演示模式' },
+] as const
+type Mode = (typeof MODES)[number]['id']
+
 interface DriveData {
   trace: TrajPoint[]
   derived: DerivedPoint[]
   entry: CacheEntry
 }
 
-/** mapStatus（T7 生命周期约定在 App 落实）：空 key 同步 fallback 不调 loader；非空异步定夺，pending 渲染加载占位 */
+/** mapStatus（Step1 生命周期约定）：空 key 同步 fallback 不调 loader；非空异步定夺，pending 渲染加载占位 */
 type MapStatus = 'pending' | 'ok' | 'fallback'
 
-/** Step1 编排壳：选 driveId → 取 trace + matchService entry → 未缓存则 derive 并回填 → 双线对比 + 偏差统计 */
+/** Step2 编排壳：Step1 数据流不动 + 双模式 tab + 回放时钟接线 */
 export default function App() {
   // 渲染期读取（非模块顶层 const）：保证测试可经 vi.stubEnv 注入空 key，防 .env 真 key 固化
   const apikey = import.meta.env.VITE_HERE_KEY ?? ''
@@ -29,6 +39,11 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [mapStatus, setMapStatus] = useState<MapStatus>(apikey ? 'pending' : 'fallback')
+  const [mode, setMode] = useState<Mode>('analysis')
+
+  const lastIndex = data && data.trace.length > 0 ? data.trace.length - 1 : 0
+  const pb = usePlayback(lastIndex) // 回放状态住在 App：tab 切换保留进度，换轨迹自动复位
+  const scrubWasPlayingRef = useRef(false) // 拖动前是否在播放（松手据此续播）
 
   useEffect(() => {
     if (!apikey) return // 空 key：同步 fallback，loader 永不被调
@@ -76,7 +91,7 @@ export default function App() {
     }
   }, [driveId, reloadToken])
 
-  /** 遍历 localStorage 删除 here-mm-cache:* 前缀键后重载当前 driveId（spec 顶栏三件套的「清除」落点） */
+  /** 遍历 localStorage 删除 here-mm-cache:* 前缀键后重载当前 driveId */
   function handleClearCache(): void {
     const doomed: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
@@ -85,6 +100,22 @@ export default function App() {
     }
     for (const k of doomed) localStorage.removeItem(k)
     setReloadToken((t) => t + 1)
+  }
+
+  /** 切回工程分析即暂停（静态分析态不该有后台播放）；进度与倍速保留 */
+  function switchMode(m: Mode): void {
+    if (m === 'analysis') pb.pause()
+    setMode(m)
+  }
+
+  /** 拖动即暂停（评审 minor 采纳）：防播放中拖动被 rAF 时钟持续前推（5x 下松手落点漂移 ~50 点/秒）；
+   *  松手时若拖动前在播放则续播——play() 会重置基线时间戳，续播无跳帧 */
+  function handleScrubStart(): void {
+    scrubWasPlayingRef.current = pb.playing
+    pb.pause()
+  }
+  function handleScrubEnd(): void {
+    if (scrubWasPlayingRef.current) pb.play()
   }
 
   return (
@@ -115,6 +146,27 @@ export default function App() {
           ))}
         </select>
         {data && <SourceBadge source={data.entry.source} />}
+        <div role="tablist" aria-label="查看模式" style={{ display: 'flex', gap: 4, marginLeft: '0.75rem' }}>
+          {MODES.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              role="tab"
+              aria-selected={mode === m.id}
+              onClick={() => switchMode(m.id)}
+              style={{
+                padding: '0.3rem 0.9rem',
+                cursor: 'pointer',
+                borderRadius: 6,
+                border: '1px solid #e5e7eb',
+                background: mode === m.id ? '#eff6ff' : '#ffffff',
+                fontWeight: mode === m.id ? 700 : 400,
+              }}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           onClick={handleClearCache}
@@ -147,13 +199,36 @@ export default function App() {
               derived={data.derived}
               mapStatus={mapStatus === 'ok' ? 'ok' : 'fallback'}
               apikey={apikey}
+              /* 分析模式传全量下标 → 同一喷洒路径一次洒满，HERE 地图实例跨 tab 复用不重建 */
+              upToIndex={mode === 'demo' ? pb.index : data.trace.length - 1}
+              carIndex={mode === 'demo' ? pb.index : undefined}
             />
           ) : null}
         </section>
         <aside style={{ width: 380, flexShrink: 0 }}>
-          <StatsPanel trace={data?.trace ?? []} derived={data?.derived ?? []} />
+          {mode === 'analysis' ? (
+            <StatsPanel trace={data?.trace ?? []} derived={data?.derived ?? []} />
+          ) : data ? (
+            <DeviationReplayChart trace={data.trace} derived={data.derived} index={pb.index} />
+          ) : null}
         </aside>
       </main>
+
+      {mode === 'demo' && data && data.trace.length > 0 && (
+        <ReplayBar
+          index={pb.index}
+          lastIndex={lastIndex}
+          tSec={data.trace[Math.min(pb.index, lastIndex)].timestamp}
+          totalSec={data.trace[lastIndex].timestamp}
+          playing={pb.playing}
+          speed={pb.speed}
+          onToggle={pb.toggle}
+          onSeek={pb.seek}
+          onSpeed={pb.setSpeed}
+          onScrubStart={handleScrubStart}
+          onScrubEnd={handleScrubEnd}
+        />
+      )}
 
       <footer style={{ padding: '0.5rem 1.5rem', borderTop: '1px solid #e5e7eb', fontSize: 12, color: '#6b7280' }}>
         Data: KITTI (Geiger et al., 2013), CC BY-NC-SA · Map: HERE
