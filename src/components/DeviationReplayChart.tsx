@@ -24,16 +24,18 @@ const ReplayAreaChart = memo(function ReplayAreaChart({
   data,
   from,
   to,
+  ymax,
 }: {
   data: WindowPoint[]
   from: number
   to: number
+  ymax: number
 }) {
   return (
     <AreaChart width={CHART_W} height={CHART_H} data={data} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
       <XAxis dataKey="t" type="number" domain={[from, to]} tickFormatter={(v: number) => `${v.toFixed(0)}s`} />
-      <YAxis width={28} />
+      <YAxis width={28} domain={[0, ymax]} />
       <Tooltip formatter={(v) => `${Number(v).toFixed(2)} m`} />
       <Area
         dataKey="deviationM"
@@ -55,6 +57,8 @@ export default function DeviationReplayChart({ trace, derived, index, windowSec 
     () => trace.map((p, i) => ({ t: p.timestamp, deviationM: derived[i]?.deviationM ?? 0 })),
     [trace, derived],
   )
+  // Y 轴钉死全程最大（每序列一次，非逐帧）：滑窗间偏差幅值视觉可比（审查 minor 采纳）
+  const yMax = useMemo(() => Math.ceil(Math.max(0, ...series.map((p) => p.deviationM))) || 1, [series])
   const total = trace.length > 0 ? trace[trace.length - 1].timestamp : 0
   // 自适应窗口：短轨迹取半程滑窗（0011 全长 23.2s → ~11.6s），保证「滚动」语义
   const win = Math.min(windowSec, Math.max(5, total / 2))
@@ -73,6 +77,7 @@ export default function DeviationReplayChart({ trace, derived, index, windowSec 
     <aside
       data-length={data.length}
       data-from={from.toFixed(1)}
+      data-ymax={String(yMax)}
       style={{ width: '100%', padding: '0.75rem', border: '1px solid #e5e7eb', borderRadius: 8 }}
     >
       <h2 style={{ fontSize: 13, fontWeight: 600, color: '#374151', margin: '0 0 0.25rem' }}>
@@ -81,7 +86,7 @@ export default function DeviationReplayChart({ trace, derived, index, windowSec 
       <div data-testid="replay-deviation" style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>
         {derived[i].deviationM.toFixed(1)} m
       </div>
-      <ReplayAreaChart data={data} from={from} to={Math.max(tQ, win)} />
+      <ReplayAreaChart data={data} from={from} to={Math.max(tQ, win)} ymax={yMax} />
     </aside>
   )
 }

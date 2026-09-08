@@ -115,7 +115,7 @@ export default function App() {
     pb.pause()
   }
   function handleScrubEnd(): void {
-    if (scrubWasPlayingRef.current) pb.play()
+    if (scrubWasPlayingRef.current && pb.index < lastIndex) pb.play() // 终点松手不重启（审查 minor 采纳）
   }
 
   return (

@@ -27,6 +27,7 @@ describe('DeviationReplayChart', () => {
     expect(container.querySelector('[data-testid="replay-deviation"]')!.textContent).toContain('3.3')
     rerender(<DeviationReplayChart trace={trace} derived={derived} index={4} />)
     expect(container.querySelector('[data-testid="replay-deviation"]')!.textContent).toContain('5.5')
+    expect(container.querySelector('[data-testid="replay-deviation"]')!.closest('aside')!.getAttribute('data-ymax')).toBe('6')
   })
 
   it('locks sliding-window wiring via data-length (tCur = trace timestamp, sliced, quantized)', () => {

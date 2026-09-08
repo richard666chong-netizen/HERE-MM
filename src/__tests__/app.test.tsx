@@ -135,11 +135,17 @@ describe('App (Step1 编排壳)', () => {
     fireEvent.pointerUp(slider)
     expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy() // 拖动前在播放 → 续播
 
-    // 切回工程分析：回放条消失并已暂停；再切回来按钮为「播放」（进度保留在 100）
+    // 拖到终点松手：不重启播放（停在暂停态）
+    fireEvent.pointerDown(slider)
+    fireEvent.change(slider, { target: { value: String(trace.length - 1) } })
+    fireEvent.pointerUp(slider)
+    expect(screen.getByRole('button', { name: '播放' })).toBeTruthy() // 未续播（终点）
+
+    // 切回工程分析：回放条消失并已暂停；再切回来按钮为「播放」（进度保留在终点）
     fireEvent.click(screen.getByRole('tab', { name: '工程分析模式' }))
     expect(screen.queryByRole('slider')).toBeNull()
     fireEvent.click(screen.getByRole('tab', { name: '客户演示模式' }))
     expect(screen.getByRole('button', { name: '播放' })).toBeTruthy()
-    expect((screen.getByRole('slider') as HTMLInputElement).value).toBe('100')
+    expect((screen.getByRole('slider') as HTMLInputElement).value).toBe(String(trace.length - 1))
   })
 })
