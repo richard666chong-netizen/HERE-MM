@@ -52,4 +52,14 @@ describe('DeviationReplayChart', () => {
     expect(container.querySelector('svg')).toBeNull()
     expect(container.textContent).toContain('暂无偏差数据')
   })
+
+  it('locks adaptive window for short traces (0011-like: total 23.2s → win ≈ 11.6s)', () => {
+    const trace = Array.from({ length: 233 }, (_, i) => tp(i * 0.1)) // 0..23.2s
+    const derived = trace.map((_, i) => dp(i, 1))
+    const { container } = render(
+      <DeviationReplayChart trace={trace} derived={derived} index={232} />,
+    )
+    // windowSec 默认 30，但 total/2 = 11.6 → win = 11.6；tCur=23.2 → tQ=23.0 → 窗口 [11.4, 23.0] = 117 点
+    expect(container.querySelector('[data-testid="replay-deviation"]')!.closest('aside')!.getAttribute('data-length')).toBe('117')
+  })
 })
