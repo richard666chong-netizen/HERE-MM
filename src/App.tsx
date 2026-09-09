@@ -52,7 +52,9 @@ export default function App() {
       .then(() => {
         if (!cancelled) setMapStatus('ok')
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        // Bug A 诊断埋点：浏览器控制台留下 loader 失败的真实原因（超时/网络/脚本错）
+        console.warn('[hereLoader]', err instanceof Error ? err.message : err)
         if (!cancelled) setMapStatus('fallback') // 加载失败/超时/断网 → SVG 兜底
       })
     return () => {

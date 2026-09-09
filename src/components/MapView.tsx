@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import SvgFallback from './SvgFallback'
+import { yawToCompassDeg } from '../lib/geo'
 import { sprayPlan } from '../lib/playback'
 import type { DerivedPoint, TrajPoint } from '../types'
 
@@ -77,8 +78,8 @@ function getHere(): HereNS | null {
 /** 车标图标：SVG 箭头烘焙航向（HERE 3.1 marker 无原生 rotation），5° 分桶缓存（≤72 个）。
  *  评审已实证 opts.anchor 平面对象可行（官方 3.1 文档示例即用字面量），无需兜底；
  *  运行时预案（Errata 模式）仅剩：若 marker.setGeometry/setIcon 不存在，退化为每帧 removeObject + addObject 重建车标。 */
-function carIcon(here: HereNS, cache: Map<number, unknown>, headingDeg: number): unknown {
-  const bucket = ((Math.round(headingDeg / 5) * 5) % 360 + 360) % 360
+function carIcon(here: HereNS, cache: Map<number, unknown>, compassDeg: number): unknown {
+  const bucket = ((Math.round(compassDeg / 5) * 5) % 360 + 360) % 360
   let icon = cache.get(bucket)
   if (!icon) {
     const svg =
@@ -211,7 +212,7 @@ export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, 
     const coord = d
       ? { lat: d.matchedLatLng[0], lng: d.matchedLatLng[1] }
       : { lat: trace[carIndex].lat, lng: trace[carIndex].lng }
-    const icon = carIcon(here, iconCacheRef.current, trace[carIndex].headingDeg)
+    const icon = carIcon(here, iconCacheRef.current, yawToCompassDeg(trace[carIndex].headingDeg))
     if (!carRef.current) {
       carRef.current = new here.map.Marker(coord, { icon, volatility: true })
       map.addObject(carRef.current)
@@ -227,7 +228,7 @@ export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, 
         ? {
             lat: derived[carIndex]?.matchedLatLng[0] ?? trace[carIndex].lat,
             lng: derived[carIndex]?.matchedLatLng[1] ?? trace[carIndex].lng,
-            headingDeg: trace[carIndex].headingDeg,
+            compassDeg: yawToCompassDeg(trace[carIndex].headingDeg), // yaw→罗盘，两渲染路径共用此归一点
           }
         : undefined
     return (

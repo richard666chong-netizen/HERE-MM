@@ -63,7 +63,7 @@ describe('MapView replay（SvgFallback 路径）', () => {
     const car = container.querySelector('[data-testid="car-marker"]')
     expect(car).toBeTruthy()
     expect(car!.getAttribute('transform')).toMatch(/translate/)
-    expect(car!.getAttribute('transform')).toMatch(/rotate\(90/) // IMU yaw 90°
+    expect(car!.getAttribute('transform')).toMatch(/rotate\(0/) // IMU yaw 90°=正北 → 罗盘 0°
     // 车标位置 = 匹配路线垂足 ≠ GNSS 原始点（gnss-dot 即 trace 位置的现成探针）
     const m = car!.getAttribute('transform')!.match(/translate\(([-\d.]+) ([-\d.]+)\)/)!
     const dot1 = container.querySelectorAll('[data-testid="gnss-dot"]')[1]

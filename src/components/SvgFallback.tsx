@@ -9,8 +9,8 @@ export interface SvgFallbackProps {
   height: number
   /** 回放：散点/终点标记只画到该下标（含）。缺省 = 全量 */
   upToIndex?: number
-  /** 回放车标（undefined = 无）。位置/航向由 MapView 归一后传入 */
-  car?: { lat: number; lng: number; headingDeg: number }
+  /** 回放车标（undefined = 无）。位置由 MapView 归一后传入；compassDeg = 罗盘航向（0=北、顺时针，已由 MapView 从 IMU yaw 转换） */
+  car?: { lat: number; lng: number; compassDeg: number }
 }
 
 /** GNSS 散点抽稀：每 ⌈n/800⌉ 取 1，始终保留首尾点 */
@@ -166,12 +166,12 @@ export default function SvgFallback({ trace, derived, width, height, upToIndex, 
         </>
       )}
 
-      {/* 回放车标：位置沿匹配路径，航向 = IMU yaw */}
+      {/* 回放车标：位置沿匹配路径，航向 = 罗盘航向（MapView 已从 IMU yaw 转换） */}
       {car && (
         <polygon
           data-testid="car-marker"
           points="0,-6 4.5,5 0,2.5 -4.5,5"
-          transform={`translate(${xy([car.lat, car.lng]).join(' ')}) rotate(${car.headingDeg})`}
+          transform={`translate(${xy([car.lat, car.lng]).join(' ')}) rotate(${car.compassDeg})`}
           fill="#1d4ed8"
           stroke="#ffffff"
           strokeWidth={1}

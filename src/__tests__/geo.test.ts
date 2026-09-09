@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { haversineM, nearestOnPolyline } from '../lib/geo'
+import { haversineM, nearestOnPolyline, yawToCompassDeg } from '../lib/geo'
 
 describe('haversineM', () => {
   it('1 degree of latitude is ~111.2km', () => {
@@ -32,5 +32,20 @@ describe('nearestOnPolyline', () => {
   })
   it('empty path throws', () => {
     expect(() => nearestOnPolyline([49, 8.4], [])).toThrow('empty path')
+  })
+})
+
+describe('yawToCompassDeg', () => {
+  it('yaw 0（正东）→ 罗盘 90', () => {
+    expect(yawToCompassDeg(0)).toBe(90)
+  })
+  it('yaw 90（正北）→ 罗盘 0', () => {
+    expect(yawToCompassDeg(90)).toBe(0)
+  })
+  it('yaw -90（正南）→ 罗盘 180（负角归一）', () => {
+    expect(yawToCompassDeg(-90)).toBe(180)
+  })
+  it('yaw 270（正西）→ 罗盘 180（>360 无需、跨零翻转）', () => {
+    expect(yawToCompassDeg(270)).toBe(180)
   })
 })

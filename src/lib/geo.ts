@@ -25,6 +25,11 @@ function toLatLng(p: [number, number], origin: LatLng): LatLng {
   return [origin[0] + p[1] / mPerDegLat, origin[1] + p[0] / mPerDegLng]
 }
 
+/** KITTI oxts yaw（deg：0=东、逆时针）→ 罗盘航向（deg：0=北、顺时针）。车标渲染专用。 */
+export function yawToCompassDeg(yawDeg: number): number {
+  return ((90 - yawDeg) % 360 + 360) % 360
+}
+
 export function nearestOnPolyline(p: LatLng, path: LatLng[]): { foot: LatLng; distM: number; segIndex: number } {
   if (path.length === 0) throw new Error('empty path')
   if (path.length === 1) return { foot: [...path[0]] as LatLng, distM: haversineM(p, path[0]), segIndex: 0 }
