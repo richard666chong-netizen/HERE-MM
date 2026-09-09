@@ -66,16 +66,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildImportRequest, importRoute } from '../lib/hereRouterClient'
 import type { TrajPoint } from '../types'
 
+// 测试代码豁免静态 import public/；polyline 必须取真实 fixture 的可解码串——
+// 合成串会被 decodeFlexiblePolyline 拒收（评审 blocker 修正：App 的 derive 链会解码它）
+import fixture0033 from '../../public/fixtures/2011_09_30_drive_0033.json'
+
 function tp(i: number): TrajPoint {
   return { lat: 49 + i * 1e-4, lng: 8.4 + i * 1e-4, timestamp: i, timestampUtc: '', headingDeg: 0, speedMps: 0, numsats: 7 }
 }
+
+const REAL_POLYLINE = (fixture0033 as unknown as { response: { routes: { sections: { polyline: string }[] }[] } })
+  .response.routes[0].sections[0].polyline
 
 const OK_RESPONSE = {
   routes: [
     {
       id: 'route-1',
       sections: [
-        { id: 's1', type: 'vehicle', polyline: 'BlBoz5xJq6K9CmC7', summary: { duration: 60, length: 500 } },
+        { id: 's1', type: 'vehicle', polyline: REAL_POLYLINE, summary: { duration: 60, length: 500 } },
       ],
     },
   ],
@@ -225,6 +232,7 @@ export async function importRoute(apikey: string, trace: TrajPoint[]): Promise<I
 
 ```ts
 import { matchService, cacheKey } from './fixtureStore' // 文件内已有 import 按现状合并，勿重复声明
+// 文件顶部另加（测试豁免 public/ 导入）：import fixture0033Fixture from '../../public/fixtures/2011_09_30_drive_0033.json'
 
 describe('matchService live 分支', () => {
   const TRACE = /* 用测试内合成 TrajPoint[]，3 点即可 */ [
@@ -232,9 +240,10 @@ describe('matchService live 分支', () => {
     { lat: 49.001, lng: 8.401, timestamp: 0.1, timestampUtc: '', headingDeg: 0, speedMps: 0, numsats: 7 },
     { lat: 49.002, lng: 8.402, timestamp: 0.2, timestampUtc: '', headingDeg: 0, speedMps: 0, numsats: 7 },
   ]
+  // polyline 取真实 fixture 可解码串（评审修正：防合成串被复制进触发 decode 的路径）
   const LIVE_RESPONSE = {
     routes: [
-      { id: 'r', sections: [{ id: 's', type: 'vehicle', polyline: 'BlBoz5xJq6K9CmC7', summary: { duration: 9, length: 44 } }] },
+      { id: 'r', sections: [{ id: 's', type: 'vehicle', polyline: (fixture0033Fixture as unknown as { response: { routes: { sections: { polyline: string }[] }[] } }).response.routes[0].sections[0].polyline, summary: { duration: 9, length: 44 } }] },
     ],
   }
 
@@ -347,7 +356,7 @@ export async function matchService(driveId: string, opts?: MatchOptions): Promis
     vi.stubEnv('VITE_HERE_KEY', 'test-key')
     const liveResponse = {
       routes: [
-        { id: 'r', sections: [{ id: 's', type: 'vehicle', polyline: 'BlBoz5xJq6K9CmC7', summary: { duration: 9, length: 44 } }] },
+        { id: 'r', sections: [{ id: 's', type: 'vehicle', polyline: (fixture0033 as unknown as CacheEntry).response.routes[0].sections[0].polyline, summary: { duration: 1740, length: 1740 } }] },
       ],
     }
     const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
@@ -372,6 +381,10 @@ export async function matchService(driveId: string, opts?: MatchOptions): Promis
     fireEvent.click(screen.getByRole('button', { name: '录制' }))
     expect(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))).toBeNull() // 重载完成前键已消失
     expect(await screen.findByText('LIVE')).toBeTruthy() // 重载后复亮
+    // 重载确实发生（评审修正，防「只删缓存不重载」假绿）：键经 live 回填恢复 + live 端点共调 2 次
+    expect(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))).not.toBeNull()
+    const liveCalls = fetchMock.mock.calls.filter(([u]) => String(u).startsWith('https://router.hereapi.com/v8/import')).length
+    expect(liveCalls).toBe(2)
   })
 
   it('record button hidden without key (existing mock path unaffected)', async () => {
@@ -546,7 +559,8 @@ if (failed) process.exit(1)
 - [ ] **Step 3: dev 冒烟**：后台 `npm run dev` + curl title/sample/fixture 200 + 停止
 - [ ] **Step 4: 手动验收清单（用户浏览器，spec L122 判据）**——写入 `.superpowers/sdd/<plan>/manual-acceptance.md`：
   - 有 key：清缓存（清除缓存按钮）→ 选 0033 → **LIVE 角标亮**；点「录制」→ 角标复亮；回放/静态双模式全流程正常
-  - 断网演练：DevTools Offline（或断网）→ 清缓存 → 重选轨迹 → 503/网络错 → 自动落回 fixture → **MOCK 角标 + 全功能可用**
+  - **断网判据（spec L122，靠缓存+SVG 兜底）**：在线先加载过轨迹（localStorage 已回填）→ DevTools Offline → 刷新/重选轨迹 → 缓存命中 → 角标照常 + 无底图 SVG 模式 + 全功能（**不要清缓存**——冷缓存+全断网时轨迹 fetch 本身会失败进错误态，那是设计内行为非缺陷）
+  - **live 回落判据（spec L98，仅封 HERE 路由域）**：DevTools Request blocking 封 `*router.hereapi.com*`（页面保持在线）→ 清除缓存 → 重选轨迹 → live 失败静默落回 fixture → **MOCK 角标 + 全功能可用**
   - `mv .env .env.bak` 重启 → 全流程 MOCK 可用 → 恢复
   - 屏录：完整 demo 录一份存档（spec L100 最终兜底）——用户操作
 - [ ] **Step 5: 收尾**：`git status` 干净；Step3 各 commit 在列；Errata 补记运行时实证
@@ -560,6 +574,13 @@ if (failed) process.exit(1)
 - **类型一致性**：`MatchOptions`（T2 定义 / T3 消费）；`importRoute(apikey, trace)`（T1/T2/T4 脚本镜像实现）；`buildImportRequest`（T1 导出、T4 脚本内联同规则 + 同步注释）；CacheEntry.source 'live' → SourceBadge（现状已支持，零改动）✓。
 - **安全性**：key 只在 .env ↔ 进程变量 ↔ URL query 间流动；测试用 'test-key' 假 key；脚本输出不含 key；URL 含 key 属 HERE apikey 认证的正常形态（浏览器 Network 面板同样可见，非泄露面扩大）。
 - **已知风险**：v8/import Base Plan 配额（2 次/驱动的录制脚本 + 开发期偶发 live——用量极低）；ISP HTTPS 劫持（脚本失败即退出、旧录制保留，应用层自动回落 fixture——双兜底）。
+
+## 修订记录
+
+- 2026-09-09 精简对抗评审（workflow `step3-plan-review`：3 视角找缺陷，controller 直接裁决；3 条发现全采纳）后修订：
+  - **[blocker] T1/T2/T3 测试的合成 polyline 不可解码**：评审者用仓库解码器实测 `'BlBoz5xJq6K9CmC7'` 抛 `truncated varint`——T3 的 App 用例会经 derive 链解码它 → 错误态 → LIVE 角标永不渲染，按计划写法必红。修正：三处测试的 polyline 全部改取已提交 fixture0033 的真实可解码串（T1/T2 虽不触发解码，一并替换防未来复制）。
+  - **[major] T6 断网演练序列不可能通过**：全断网 + 清缓存时轨迹 fetch（加载链第一环）本身失败 → 错误态而非 MOCK——把 L98（live 回落）与 L122（断网可演示）两个判据混进了必然失败场景。修正：拆为两条可执行演练——断网判据 = 在线预热缓存后 Offline（缓存命中 + SVG 兜底）；回落判据 = Request blocking 仅封 `*router.hereapi.com*` 后清缓存（live 503 → 静默 fixture → MOCK）。
+  - **[major] T3 录制按钮用例不验证重载**：漏写 `setReloadToken` 的实现仍全绿（角标残留在旧 data 上）。修正：用例末尾补「缓存键经重载回填恢复」+「live 端点共调 2 次」双断言（镜像既有清除缓存用例的回填断言模式）。
 
 ## Errata（实现期运行时实证修正）
 
