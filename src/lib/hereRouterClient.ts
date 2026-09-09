@@ -1,6 +1,6 @@
 import type { ImportResponse, TrajPoint } from '../types'
 
-/** 降采样：≤500 点（API 上限 50000，取小 payload），首点天然保留、末点不在序列时追加；6 位小数（HERE polyline 精度） */
+/** 降采样：≈500 点（末点补推时可达 501，远低于 API 50000 上限），首点天然保留、末点不在序列时追加；6 位小数（HERE polyline 精度） */
 export function buildImportRequest(trace: TrajPoint[]): Array<{ lat: number; lng: number }> {
   const stride = Math.max(1, Math.ceil(trace.length / 500))
   const out: Array<{ lat: number; lng: number }> = []

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Step3 服务器侧录制回写（spec L122）：读 .env key（不回显），对两条轨迹各发一次 v8/import，
  *  刷新 data/fixtures/<driveId>_import_{req,resp}.json（gitignored），并与 public/fixtures 已提交 fixture 比对。
- *  降采样规则与 src/lib/hereRouterClient.ts 的 buildImportRequest 保持一致（改动需两处同步）。 */
+ *  降采样规则与 src/lib/hereRouterClient.ts 的 buildImportRequest 保持一致（≈500 点，末点补推时可达 501；改动需两处同步）。 */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'

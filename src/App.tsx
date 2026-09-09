@@ -6,7 +6,7 @@ import SourceBadge from './components/SourceBadge'
 import StatsPanel from './components/StatsPanel'
 import { usePlayback } from './hooks/usePlayback'
 import { derive } from './lib/derive'
-import { cacheKey, matchService, writeCache } from './lib/fixtureStore'
+import { cacheKey, matchService, readCache, writeCache } from './lib/fixtureStore'
 import { loadHereMaps } from './lib/hereLoader'
 import type { CacheEntry, DerivedPoint, TrajPoint } from './types'
 
@@ -80,6 +80,10 @@ export default function App() {
         }
         setData({ trace, derived, entry: { ...entry, derived } })
       } catch (e) {
+        // live entry 可能已写缓存但 derive 失败（如坏 polyline）——驱逐防毒化：
+        // 缓存命中短路会绕过 fixture 回落，直到手动清缓存（Step3 终审 minor 采纳）
+        const cached = readCache(driveId)
+        if (cached?.source === 'live') localStorage.removeItem(cacheKey(driveId))
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       } finally {
         if (!cancelled) setLoading(false)

@@ -192,4 +192,30 @@ describe('App (Step1 编排壳)', () => {
     await screen.findByText('MOCK')
     expect(screen.queryByRole('button', { name: '录制' })).toBeNull()
   })
+
+  it('live entry with undecodable polyline is evicted from cache on derive failure', async () => {
+    vi.stubEnv('VITE_HERE_KEY', 'test-key')
+    const badLive = {
+      routes: [
+        { id: 'r', sections: [{ id: 's', type: 'vehicle', polyline: '!!not-a-polyline!!', summary: { duration: 9, length: 44 } }] },
+      ],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+        const url = String(input)
+        if (url.startsWith('https://router.hereapi.com/v8/import')) {
+          return { ok: true, status: 200, json: async () => badLive } as Response
+        }
+        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        if (mTrace) return jsonResponse(TRACES[mTrace[1]])
+        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
+        throw new Error(`unexpected fetch: ${url}`)
+      }),
+    )
+    render(<App />)
+    expect(await screen.findByText(/加载失败/)).toBeTruthy() // derive 对坏 polyline 抛错
+    expect(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))).toBeNull() // live entry 已被驱逐
+  })
 })
