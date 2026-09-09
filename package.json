@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "record": "node scripts/record-fixtures.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",
