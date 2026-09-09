@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const DRIVES = ['2011_09_26_drive_0011', '2011_09_30_drive_0033']
+const DRIVES = ['2011_09_26_drive_0011', '2011_09_30_drive_0033', '2011_09_26_drive_0093']
 
 function readKey() {
   const env = readFileSync(join(ROOT, '.env'), 'utf8')
