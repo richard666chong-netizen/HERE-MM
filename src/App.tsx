@@ -6,7 +6,7 @@ import SourceBadge from './components/SourceBadge'
 import StatsPanel from './components/StatsPanel'
 import { usePlayback } from './hooks/usePlayback'
 import { derive } from './lib/derive'
-import { matchService, writeCache } from './lib/fixtureStore'
+import { cacheKey, matchService, writeCache } from './lib/fixtureStore'
 import { loadHereMaps } from './lib/hereLoader'
 import type { CacheEntry, DerivedPoint, TrajPoint } from './types'
 
@@ -70,7 +70,7 @@ export default function App() {
         const traceRes = await fetch(`/sample/here/${driveId}.json`)
         if (!traceRes.ok) throw new Error(`trace load failed: ${driveId}`)
         const trace = (await traceRes.json()) as TrajPoint[]
-        const entry = await matchService(driveId)
+        const entry = await matchService(driveId, apikey ? { apikey, trace } : undefined)
         if (cancelled) return
         // 未缓存（fixture 的 derived 为空）→ 派生并回填缓存
         let derived = entry.derived
@@ -99,6 +99,13 @@ export default function App() {
       if (k !== null && k.startsWith('here-mm-cache:')) doomed.push(k)
     }
     for (const k of doomed) localStorage.removeItem(k)
+    setReloadToken((t) => t + 1)
+  }
+
+  /** 「录制」（spec L50 顶栏三件套落点）：删当前 driveId 缓存并重载 → 缓存 miss 后走 live；
+   *  live 失败自动落回 fixture（演示不中断）。仓库文件级回写归 scripts/record-fixtures.mjs。 */
+  function handleRecord(): void {
+    localStorage.removeItem(cacheKey(driveId))
     setReloadToken((t) => t + 1)
   }
 
@@ -167,13 +174,22 @@ export default function App() {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={handleClearCache}
-          style={{ marginLeft: 'auto', padding: '0.3rem 0.9rem', cursor: 'pointer' }}
-        >
-          清除缓存
-        </button>
+        {/* 右推容器（spec L50 顶栏三件套落点）：录制仅 apikey 非空渲染；无 key 时只剩清除缓存，
+            布局与 Step2 一致（容器接管 marginLeft:'auto'，按钮自身不带） */}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+          {apikey && (
+            <button type="button" onClick={handleRecord} style={{ padding: '0.3rem 0.9rem', cursor: 'pointer' }}>
+              录制
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleClearCache}
+            style={{ padding: '0.3rem 0.9rem', cursor: 'pointer' }}
+          >
+            清除缓存
+          </button>
+        </div>
       </header>
 
       <main style={{ flex: 1, display: 'flex', gap: '1rem', padding: '1rem 1.5rem', alignItems: 'stretch' }}>

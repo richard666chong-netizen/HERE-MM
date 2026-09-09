@@ -12,6 +12,9 @@ import trace0033 from '../../public/sample/here/2011_09_30_drive_0033.json'
 import fixture0011 from '../../public/fixtures/2011_09_26_drive_0011.json'
 import fixture0033 from '../../public/fixtures/2011_09_30_drive_0033.json'
 
+// 有 key 时 App 会调 loader：mock 掉防 script 注入/8s 超时（hoisted，空 key 用例 loader 本就不被调，零影响）
+vi.mock('../lib/hereLoader', () => ({ loadHereMaps: vi.fn(() => Promise.resolve({})) }))
+
 const TRACES: Record<string, unknown> = {
   '2011_09_26_drive_0011': trace0011,
   '2011_09_30_drive_0033': trace0033,
@@ -147,5 +150,46 @@ describe('App (Step1 编排壳)', () => {
     fireEvent.click(screen.getByRole('tab', { name: '客户演示模式' }))
     expect(screen.getByRole('button', { name: '播放' })).toBeTruthy()
     expect((screen.getByRole('slider') as HTMLInputElement).value).toBe(String(trace.length - 1))
+  })
+
+  it('with key: live path lights LIVE badge; record button clears cache and reloads', async () => {
+    vi.stubEnv('VITE_HERE_KEY', 'test-key')
+    const liveResponse = {
+      routes: [
+        { id: 'r', sections: [{ id: 's', type: 'vehicle', polyline: (fixture0033 as unknown as CacheEntry).response.routes[0].sections[0].polyline, summary: { duration: 1740, length: 1740 } }] },
+      ],
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input)
+      if (url.startsWith('https://router.hereapi.com/v8/import')) {
+        return { ok: true, status: 200, json: async () => liveResponse } as Response
+      }
+      const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+      if (mTrace) return jsonResponse(TRACES[mTrace[1]])
+      const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+      if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    expect(await screen.findByText('LIVE')).toBeTruthy() // live 调用成功 → 角标 LIVE
+    const stored = JSON.parse(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))!)
+    expect(stored.source).toBe('live')
+
+    // 录制按钮：清当前缓存 → 重载（再次 live）
+    fireEvent.click(screen.getByRole('button', { name: '录制' }))
+    expect(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))).toBeNull() // 重载完成前键已消失
+    expect(await screen.findByText('LIVE')).toBeTruthy() // 重载后复亮
+    // 重载确实发生（评审修正，防「只删缓存不重载」假绿）：键经 live 回填恢复 + live 端点共调 2 次
+    expect(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))).not.toBeNull()
+    const liveCalls = fetchMock.mock.calls.filter(([u]) => String(u).startsWith('https://router.hereapi.com/v8/import')).length
+    expect(liveCalls).toBe(2)
+  })
+
+  it('record button hidden without key (existing mock path unaffected)', async () => {
+    render(<App />)
+    await screen.findByText('MOCK')
+    expect(screen.queryByRole('button', { name: '录制' })).toBeNull()
   })
 })
