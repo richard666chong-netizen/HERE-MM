@@ -1,5 +1,5 @@
-// Step3: VITE_HERE_KEY 存在时改走 HereRouterClient，失败回落 fixture
-import type { CacheEntry } from '../types'
+import { importRoute } from './hereRouterClient'
+import type { CacheEntry, TrajPoint } from '../types'
 
 export function cacheKey(driveId: string): string {
   return `here-mm-cache:${driveId}`
@@ -34,12 +34,33 @@ export async function loadFixture(driveId: string): Promise<CacheEntry> {
   }
 }
 
+export interface MatchOptions {
+  apikey: string
+  trace: TrajPoint[]
+}
+
 /**
- * 双层缓存取数：localStorage 命中直接返回；未命中回落 public/fixtures。
- * derive(trace, response) 不在本层做——由 App 层组合并 writeCache 回填，避免反向依赖 trace 加载。
+ * 双层缓存取数：localStorage 命中直接返回；未命中时有 opts（apikey+trace）先走 live（spec L61-62），
+ * live 失败静默落回 fixture（spec L98：live 不可用不打断演示）；derive 不在本层做——App 层组合回填。
  */
-export async function matchService(driveId: string): Promise<CacheEntry> {
+export async function matchService(driveId: string, opts?: MatchOptions): Promise<CacheEntry> {
   const cached = readCache(driveId)
   if (cached) return cached
+  if (opts) {
+    try {
+      const response = await importRoute(opts.apikey, opts.trace)
+      const entry: CacheEntry = {
+        driveId,
+        source: 'live',
+        createdAt: new Date().toISOString(),
+        response,
+        derived: [],
+      }
+      writeCache(entry)
+      return entry
+    } catch {
+      /* live 失败 → 落回 fixture */
+    }
+  }
   return loadFixture(driveId)
 }
