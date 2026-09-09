@@ -584,5 +584,7 @@ if (failed) process.exit(1)
 
 ## Errata（实现期运行时实证修正）
 
-（执行期追加）
+- 2026-09-09 手动验收实证（用户浏览器，真实 key）：
+  - **「HERE 地图无法加载」定性为非缺陷**：控制台 Tangram `Scene.load ... 'getExtension' of null` / `'lookAtManipulator' of null` 系 **dev 模式 StrictMode 双挂载的 dispose 竞态噪声**（第一份地图已 dispose、其异步场景仍完成后落入已销毁的 WebGL 上下文；第二份地图正常）。生产构建（`npm run preview`）控制台干净、底图+轨迹正常——**面试演示建议用 preview 模式**。「轨迹先出、底图 1-2s 后到」为 HERE 矢量底图正常暖机；「正在加载 5-6s」为 SDK ~1MB 的 CDN 下载时长（本机实测 CDN 可达）。残余提示：FiraGO 地图字体 [Intervention] 为浏览器对慢网络的降级提示，无功能影响；favicon 404 已补内联 SVG 图标。
+  - **车标航向恒错（Bug B）**：`TrajPoint.headingDeg` 实为 KITTI oxts yaw（0=东、逆时针），车标按罗盘航向（0=北、顺时针）消费导致恒偏（0033 均偏 15.6°、0011 均偏 59.5°；坐标反算真航向对照：`compass=(90−yaw)%360` 下两轨迹 100% 点位误差 ≤5°、圆均值 ≈0°）。修复 `e1e9a88`：`geo.yawToCompassDeg` 纯函数，MapView 归一处统一转换、SVG/HERE 两渲染路径共用；数据与 derive 不动。HERE 真实路径人工验证通过。
 
