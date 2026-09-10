@@ -44,7 +44,9 @@ def detect_outages(trace, sat_threshold=4):
 
 
 def dead_reckon(trace):
-    """Replicate src/lib/deadReckoning.ts deadReckon() exactly."""
+    """Replicate src/lib/deadReckoning.ts deadReckon() exactly.
+    Speed source: GNSS displacement (|GNSS[k]-GNSS[k-1]|/dt) preferred over GPS Doppler speedMps.
+    Fallback to speedMps when GNSS frozen (~0) or jumping (>50 m/s)."""
     n = len(trace)
     if n == 0:
         return [], [], []
@@ -53,11 +55,30 @@ def dead_reckon(trace):
     innovations = []
     p_lat = trace[0]['lat']
     p_lng = trace[0]['lng']
+    last_good_speed = max(0, trace[0]['speedMps'])
     for k in range(n):
         if k > 0:
             dt = trace[k]['timestamp'] - trace[k - 1]['timestamp']
+            # Speed estimation: prefer GNSS displacement speed
+            if dt > 0:
+                d_lat_m = (trace[k]['lat'] - trace[k - 1]['lat']) * M_PER_DEG_LAT
+                d_lng_m = (trace[k]['lng'] - trace[k - 1]['lng']) * M_PER_DEG_LAT * math.cos(trace[k]['lat'] * DEG)
+                disp_speed = math.sqrt(d_lat_m * d_lat_m + d_lng_m * d_lng_m) / dt
+                # Direction consistency: GNSS displacement direction vs IMU heading
+                disp_compass = (math.atan2(d_lng_m, d_lat_m) * 180 / math.pi + 360) % 360
+                imu_compass = yaw_to_compass_deg(trace[k]['headingDeg'])
+                dir_diff = abs(disp_compass - imu_compass) % 360
+                if dir_diff > 180:
+                    dir_diff = 360 - dir_diff
+                if 0.5 < disp_speed < 20 and dir_diff < 45:
+                    speed = disp_speed
+                    last_good_speed = speed
+                else:
+                    speed = last_good_speed
+            else:
+                speed = last_good_speed
             c = yaw_to_compass_deg(trace[k]['headingDeg']) * DEG
-            step = trace[k]['speedMps'] * dt
+            step = speed * dt
             p_lat = p_lat + (step * math.cos(c)) / M_PER_DEG_LAT
             p_lng = p_lng + (step * math.sin(c)) / (M_PER_DEG_LAT * math.cos(p_lat * DEG))
         if k % 10 == 0 and trace[k]['numsats'] > UPDATE_THRESHOLD:

@@ -16,7 +16,12 @@ export interface DrResult {
 }
 
 /** 多速率航位推算：10Hz 惯性递推 + 1Hz GNSS 纠正（历元 = i%10===0，含帧 0）。
- *  帧 0 无条件以 GNSS 播种（不论卫星数）——前导失锁段即从帧 0 纯递推，全程无可信历元 = 全程纯递推。 */
+ *  帧 0 无条件以 GNSS 播种（不论卫星数）——前导失锁段即从帧 0 纯递推，全程无可信历元 = 全程纯递推。
+ *
+ *  速度来源（Step4 T4 修正）：GPS 多普勒速度（speedMps）在低卫星数时系统性偏低甚至负值，
+ *  导致 DR 累积漂移。改用 GNSS 位移速度（|GNSS[k]−GNSS[k−1]|/dt）作为主速度源——
+ *  反映实际运动而非多普勒测速。GNSS 冻结（位移≈0，如隧道）时回退 speedMps（惯导知道车在走）；
+ *  GNSS 跳变（位移>50m/frame，如多径毛刺）时用上一帧合理速度。 */
 export function deadReckon(
   trace: TrajPoint[],
   opts?: { gain?: number; updateThreshold?: number },
@@ -28,12 +33,32 @@ export function deadReckon(
   const innovations: number[] = []
   if (trace.length === 0) return { positions, corrected, innovations }
   let p: [number, number] = [trace[0].lat, trace[0].lng]
+  let lastGoodSpeed = Math.max(0, trace[0].speedMps)
   for (let k = 0; k < trace.length; k++) {
     if (k > 0) {
-      // 10Hz 预测：v_k·dt_k，方向 = 本帧罗盘航向；dLat = v·dt·cos/111320，dLng = v·dt·sin/(111320·cos(lat))
       const dt = trace[k].timestamp - trace[k - 1].timestamp
+      // 速度估计：优先 GNSS 位移速度（反映真实运动），冻结/跳变/方向不符时回退
+      let speed: number
+      if (dt > 0) {
+        const dLatM = (trace[k].lat - trace[k - 1].lat) * M_PER_DEG_LAT
+        const dLngM = (trace[k].lng - trace[k - 1].lng) * M_PER_DEG_LAT * Math.cos(trace[k].lat * DEG)
+        const dispSpeed = Math.sqrt(dLatM * dLatM + dLngM * dLngM) / dt
+        // 方向一致性检查：GNSS 位移方向 vs IMU 航向。偏差 >45° = 多径跳变，不可信
+        const dispCompass = (Math.atan2(dLngM, dLatM) * 180 / Math.PI + 360) % 360
+        const imuCompass = yawToCompassDeg(trace[k].headingDeg)
+        let dirDiff = Math.abs(dispCompass - imuCompass) % 360
+        if (dirDiff > 180) dirDiff = 360 - dirDiff
+        if (dispSpeed > 0.5 && dispSpeed < 20 && dirDiff < 45) {
+          speed = dispSpeed
+          lastGoodSpeed = speed
+        } else {
+          speed = lastGoodSpeed
+        }
+      } else {
+        speed = lastGoodSpeed
+      }
       const c = yawToCompassDeg(trace[k].headingDeg) * DEG
-      const step = trace[k].speedMps * dt
+      const step = speed * dt
       p = [
         p[0] + (step * Math.cos(c)) / M_PER_DEG_LAT,
         p[1] + (step * Math.sin(c)) / (M_PER_DEG_LAT * Math.cos(p[0] * DEG)),
