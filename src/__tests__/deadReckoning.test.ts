@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import trace0033 from '../../public/sample/here/2011_09_30_drive_0033.json'
 import trace0093 from '../../public/sample/here/2011_09_26_drive_0093.json'
+import drArtifact from '../../public/sample/here/2011_09_26_drive_0093.dr.json'
 import { deadReckon, detectOutages } from '../lib/deadReckoning'
 import { haversineM } from '../lib/geo'
 import type { TrajPoint } from '../types'
@@ -213,5 +214,21 @@ describe('deadReckoning（多速率 1:10 航位推算）', () => {
     console.log(
       `[smoke 0093] maxSep=${maxAll.toFixed(1)}m @ idx ${argAll} (numsats=${t93[argAll].numsats}), maxSep within outage=${maxIn.toFixed(1)}m`,
     )
+  })
+
+  // Step4 T4: py/TS 同步验证——scripts/rerecord-0093-dr.py 复刻 deadReckon 落盘 artifact，
+  // TS 逐点 haversine ≤0.1m 比对。py 复刻参数漂移即红。
+  it('py artifact 同步：TS deadReckon(0093).positions 与 artifact 逐点 haversine ≤0.1m', () => {
+    const t93 = trace0093 as unknown as TrajPoint[]
+    const { positions } = deadReckon(t93)
+    const artifact = drArtifact as unknown as Array<[number, number]>
+    expect(artifact.length).toBe(positions.length)
+    let maxDev = 0
+    for (let i = 0; i < positions.length; i++) {
+      const d = haversineM(positions[i], artifact[i])
+      if (d > maxDev) maxDev = d
+    }
+    expect(maxDev).toBeLessThanOrEqual(0.1)
+    console.log(`[py-sync 0093] maxDev=${maxDev.toFixed(6)}m (≤0.1m threshold)`)
   })
 })

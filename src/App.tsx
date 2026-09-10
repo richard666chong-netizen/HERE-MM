@@ -81,7 +81,14 @@ export default function App() {
         const traceRes = await fetch(`/sample/here/${driveId}.json`)
         if (!traceRes.ok) throw new Error(`trace load failed: ${driveId}`)
         const trace = (await traceRes.json()) as TrajPoint[]
-        const entry = await matchService(driveId, apikey ? { apikey, trace } : undefined)
+        // DR 增强（Step4 T4）：门控阈值 4——轨迹含失锁点时，live 请求的 trace 用 DR 位置
+        // 替换 lat/lng（其余字段透传）。0011/0033 的 ≤4 星点为 0 → 零变化。
+        // 缓存/fixture 路径不增强（离线即所录即所得）。
+        const drPositions = apikey && detectOutages(trace, 4).some(Boolean) ? deadReckon(trace).positions : null
+        const liveTrace = drPositions
+          ? trace.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] }))
+          : trace
+        const entry = await matchService(driveId, apikey ? { apikey, trace: liveTrace } : undefined)
         if (cancelled) return
         // 未缓存（fixture 的 derived 为空）→ 派生并回填缓存
         let derived = entry.derived

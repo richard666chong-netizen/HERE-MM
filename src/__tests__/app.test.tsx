@@ -2,15 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import App from '../App'
 import { cacheKey } from '../lib/fixtureStore'
+import { deadReckon, detectOutages } from '../lib/deadReckoning'
 import { derive } from '../lib/derive'
+import { buildImportRequest } from '../lib/hereRouterClient'
 import { deviationStats } from '../lib/stats'
 import type { CacheEntry, TrajPoint } from '../types'
 
 // 测试代码豁免静态 import public/（src 运行时路径禁止，见计划 Global Constraints）
 import trace0011 from '../../public/sample/here/2011_09_26_drive_0011.json'
 import trace0033 from '../../public/sample/here/2011_09_30_drive_0033.json'
+import trace0093 from '../../public/sample/here/2011_09_26_drive_0093.json'
 import fixture0011 from '../../public/fixtures/2011_09_26_drive_0011.json'
 import fixture0033 from '../../public/fixtures/2011_09_30_drive_0033.json'
+import fixture0093 from '../../public/fixtures/2011_09_26_drive_0093.json'
 
 // 有 key 时 App 会调 loader：mock 掉防 script 注入/8s 超时（hoisted，空 key 用例 loader 本就不被调，零影响）
 vi.mock('../lib/hereLoader', () => ({ loadHereMaps: vi.fn(() => Promise.resolve({})) }))
@@ -18,10 +22,12 @@ vi.mock('../lib/hereLoader', () => ({ loadHereMaps: vi.fn(() => Promise.resolve(
 const TRACES: Record<string, unknown> = {
   '2011_09_26_drive_0011': trace0011,
   '2011_09_30_drive_0033': trace0033,
+  '2011_09_26_drive_0093': trace0093,
 }
 const FIXTURES: Record<string, unknown> = {
   '2011_09_26_drive_0011': fixture0011,
   '2011_09_30_drive_0033': fixture0033,
+  '2011_09_26_drive_0093': fixture0093,
 }
 
 function jsonResponse(data: unknown): Response {
@@ -217,5 +223,77 @@ describe('App (Step1 编排壳)', () => {
     render(<App />)
     expect(await screen.findByText(/加载失败/)).toBeTruthy() // derive 对坏 polyline 抛错
     expect(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))).toBeNull() // live entry 已被驱逐
+  })
+
+  // Step4 T4：DR 增强 live 匹配。0093 含失锁点 → live 请求 trace 用 DR 位置替换 lat/lng；
+  // 0033 无失锁点 → live 请求零变化（门控阈值 4 下 ≤4 星点为 0）。
+  it('0093 live: DR-augmented trace sent to HERE API (body ≠ original trace)', async () => {
+    vi.stubEnv('VITE_HERE_KEY', 'test-key')
+    const t0093 = trace0093 as unknown as TrajPoint[]
+    const f0093 = fixture0093 as unknown as CacheEntry
+    const liveResponse = f0093.response
+    let capturedBody: string | null = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = String(input)
+        if (url.startsWith('https://router.hereapi.com/v8/import')) {
+          capturedBody = init?.body as string
+          return { ok: true, status: 200, json: async () => liveResponse } as Response
+        }
+        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        if (mTrace) return jsonResponse(TRACES[mTrace[1]])
+        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
+        throw new Error(`unexpected fetch: ${url}`)
+      }),
+    )
+
+    render(<App />)
+    // 选 0093（下拉第三项）
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '2011_09_26_drive_0093' } })
+    await screen.findByText('LIVE')
+
+    // 期望 body.trace = buildImportRequest(drAugmented)（DR 位置替换 lat/lng，同进程同变换含 round6）
+    const drPositions = deadReckon(t0093).positions
+    const drAugmented = t0093.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] }))
+    const expectedBody = buildImportRequest(drAugmented)
+    const actualBody = JSON.parse(capturedBody!).trace
+    expect(actualBody).toEqual(expectedBody)
+    // 反断言：body ≠ buildImportRequest(原始 trace)——「忘了增强」的真证伪点
+    const originalBody = buildImportRequest(t0093)
+    expect(actualBody).not.toEqual(originalBody)
+  })
+
+  it('0033 live: zero DR augmentation (no outages at threshold 4 → trace unchanged)', async () => {
+    vi.stubEnv('VITE_HERE_KEY', 'test-key')
+    const t0033 = trace0033 as unknown as TrajPoint[]
+    const f0033 = fixture0033 as unknown as CacheEntry
+    const liveResponse = f0033.response
+    let capturedBody: string | null = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = String(input)
+        if (url.startsWith('https://router.hereapi.com/v8/import')) {
+          capturedBody = init?.body as string
+          return { ok: true, status: 200, json: async () => liveResponse } as Response
+        }
+        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        if (mTrace) return jsonResponse(TRACES[mTrace[1]])
+        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
+        throw new Error(`unexpected fetch: ${url}`)
+      }),
+    )
+
+    render(<App />)
+    await screen.findByText('LIVE')
+
+    // 0033 在门控阈值 4 下 ≤4 星点为 0 → live 请求零变化
+    expect(detectOutages(t0033, 4).some(Boolean)).toBe(false) // 前置验证
+    const actualBody = JSON.parse(capturedBody!).trace
+    const expectedBody = buildImportRequest(t0033)
+    expect(actualBody).toEqual(expectedBody) // 原始 trace 直送，无 DR 增强
   })
 })
