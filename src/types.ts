@@ -7,6 +7,11 @@ export interface TrajPoint {
   headingDeg: number
   speedMps: number
   numsats: number
+  /** KITTI oxts posmode：0 = 接收机无定位解（失锁硬判据）。0011/0033/0093 的既有样本无此列。 */
+  posmode?: number
+  /** 该帧接收机无定位解（真实 posmode==0 或仿真隧道窗口内）——由 buildGnssFeed 标记。
+   *  渲染层据此不画 GNSS 散点；deadReckon 据此跳过 1Hz 更新。 */
+  noFix?: boolean
 }
 
 /** HERE Routing v8 /import 响应（本应用实际消费的子集；response 字段整体入库不裁剪） */

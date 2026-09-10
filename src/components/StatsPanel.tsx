@@ -6,6 +6,10 @@ import { deviationHistogram, deviationStats, deviationVsDistance } from '../lib/
 export interface StatsPanelProps {
   trace: TrajPoint[]
   derived: DerivedPoint[]
+  /** 失锁/隧道期 DR 推算位置与真值的最大偏差（米）。缺省（无 DR 层）不渲染该 chip。
+   *  与上面三个 chip 的口径不同：那三个是「真值→匹配路线」（MM 绑路精度），
+   *  这一个是「DR→真值」（DR 自由递推的漂移量）——演示口径即「DR 漂了 67m，MM 绑路后 X m」。 */
+  drMaxDriftM?: number
 }
 
 // 固定尺寸而非 ResponsiveContainer：jsdom 无 ResizeObserver，显式宽高保证可测且侧栏宽度恒定
@@ -38,7 +42,7 @@ const chartTitleStyle: CSSProperties = {
 }
 
 /** 偏差统计侧栏：汇总 chips（均值/95分位/最大）+ 直方图 + 偏差-里程曲线（视图零实时计算的落点） */
-export default function StatsPanel({ trace, derived }: StatsPanelProps) {
+export default function StatsPanel({ trace, derived, drMaxDriftM }: StatsPanelProps) {
   if (derived.length === 0) {
     return (
       <aside style={panelStyle}>
@@ -58,11 +62,12 @@ export default function StatsPanel({ trace, derived }: StatsPanelProps) {
     distanceKm: p.distanceM / 1000,
     deviationM: p.deviationM,
   }))
-  const chips: ReadonlyArray<readonly [string, number]> = [
+  const chips: Array<[string, number]> = [
     ['均值', stats.meanM],
     ['95分位', stats.p95M],
     ['最大', stats.maxM],
   ]
+  if (drMaxDriftM !== undefined) chips.push(['DR 漂移', drMaxDriftM])
 
   return (
     <aside style={panelStyle}>

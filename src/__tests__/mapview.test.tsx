@@ -166,3 +166,35 @@ describe('MapView DR 图层（SvgFallback 路径）', () => {
     expect(growthM).toBeLessThan(expectM * 1.1)
   })
 })
+
+// Step6：散点口径从「原始 OXTS」改为「接收机实际报的 GNSS」——失锁帧不画点，
+// 隧道/城市峡谷/树荫时期的退化才看得见（此前散点画真值，退化被抹平）。
+describe('MapView 散点口径（gnssPath）', () => {
+  const trace = [tp(49.0, 8.4), tp(49.01, 8.405), tp(49.02, 8.41)]
+  const derived = [dp(0, 49.0, 8.4), dp(1, 49.01, 8.405), dp(2, 49.02, 8.41)]
+
+  it('gnssPath 中 noFix 帧不产出 gnss-dot，其余图层不受影响', () => {
+    const gnssPath = trace.map((p, i) => (i === 1 ? { ...p, noFix: true } : p))
+    const { container } = render(
+      <MapView trace={trace} derived={derived} mapStatus="fallback" apikey="" gnssPath={gnssPath} />,
+    )
+    expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(2) // 帧 1 消失
+    expect(container.querySelector('[data-testid="matched-path"]')).toBeTruthy()
+    expect(container.querySelectorAll('[data-testid="endpoint-marker"]').length).toBe(2) // 起终点走真值
+  })
+
+  it('gnssPath 一并入画幅：只存在于 gnssPath 的远点也会被 viewBox 覆盖（防裁剪）', () => {
+    // 归一化把最长边钉在 1000 单位，故画幅"变高"表现为宽高比变小（宽不变、高变长）
+    const aspect = (gnssPath?: TrajPoint[]) => {
+      const { container } = render(
+        <MapView trace={trace} derived={[]} mapStatus="fallback" apikey="" gnssPath={gnssPath} />,
+      )
+      const parts = (container.querySelector('svg')!.getAttribute('viewBox') as string)
+        .trim()
+        .split(/\s+/)
+        .map(Number)
+      return parts[2] / parts[3]
+    }
+    expect(aspect([...trace, tp(49.06, 8.4)])).toBeLessThan(aspect())
+  })
+})

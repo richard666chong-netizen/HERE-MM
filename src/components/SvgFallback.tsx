@@ -13,6 +13,9 @@ export interface SvgFallbackProps {
   car?: { lat: number; lng: number; compassDeg: number }
   /** DR 航位推算轨迹（缺省不渲染）。紫虚线：GNSS 散点之上、匹配路线（蓝）之下；并计入画幅 bbox 防裁剪 */
   drPath?: Array<[number, number]>
+  /** 「接收机实际报的 GNSS」流（缺省 = trace）——散点从它画，`noFix` 帧不画点。
+   *  与 trace 同下标对齐：失锁期位置被冻结，画出来就是一坨不动的点，故直接省略。 */
+  gnssPath?: TrajPoint[]
 }
 
 /** GNSS 散点抽稀：每 ⌈n/800⌉ 取 1，始终保留首尾点 */
@@ -29,11 +32,23 @@ const SCALE_BAR_STEPS_M = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 2
 
 /** 无底图 SVG 渲染：等距圆柱投影（标准纬线取 bbox 中点纬度，x 乘 cos(midLat)——防 49° 纬度图形 1.52× 横向变形），
  *  复用 geo.toLocalM（以 bbox 中心为原点）避免两套投影实现分叉。 */
-export default function SvgFallback({ trace, derived, width, height, upToIndex, car, drPath }: SvgFallbackProps) {
+export default function SvgFallback({
+  trace,
+  derived,
+  width,
+  height,
+  upToIndex,
+  car,
+  drPath,
+  gnssPath,
+}: SvgFallbackProps) {
   const geo = useMemo(() => {
+    const dots = gnssPath ?? trace
     // drPath 一并入 bbox（评审 minor 修正）：0093 尾段 15.5s 纯递推分离可达 26m 级，不纳入则紫线被画幅裁剪
+    // gnssPath 同理入画幅（Step6）：冻结位置可能在真值轨迹 bbox 之外（如全程失锁的 0106 型轨迹）
     const all: LatLng[] = [
       ...trace.map((t) => [t.lat, t.lng] as LatLng),
+      ...dots.map((t) => [t.lat, t.lng] as LatLng),
       ...derived.map((d) => [d.matchedLatLng[0], d.matchedLatLng[1]] as LatLng),
       ...(drPath ?? []),
     ]
@@ -103,10 +118,10 @@ export default function SvgFallback({ trace, derived, width, height, upToIndex, 
 
     return {
       vw, vh, xy, xyStr,
-      thin: thinIndices(trace.length),
+      thin: thinIndices((gnssPath ?? trace).length),
       barX, barY, barUnits, barLabel,
     }
-  }, [trace, derived, drPath])
+  }, [trace, derived, drPath, gnssPath])
   if (!geo) return null
   const { vw, vh, xy, xyStr, thin, barX, barY, barUnits, barLabel } = geo
   // 仍以全量 trace+derived+drPath 定 bbox——回放期间画幅稳定不跳变（upTo/car 不进 useMemo 依赖）
@@ -138,11 +153,13 @@ export default function SvgFallback({ trace, derived, width, height, upToIndex, 
       strokeLinecap="round"
     />
   )
-  // GNSS 散点（橙，抽稀；回放下只画已洒到的下标——filter 是每帧仅有的全量遍历）
+  // GNSS 散点（橙，抽稀；回放下只画已洒到的下标——filter 是每帧仅有的全量遍历）。
+  // noFix 帧不画：失锁期接收机无定位解（真实或仿真隧道），画出来是一坨冻住的点，不如留白
+  const gnssDots = gnssPath ?? trace
   const dotsEl = thin
-    .filter((i) => i <= upTo)
+    .filter((i) => i <= upTo && !gnssDots[i].noFix)
     .map((i) => {
-      const [cx, cy] = xy([trace[i].lat, trace[i].lng])
+      const [cx, cy] = xy([gnssDots[i].lat, gnssDots[i].lng])
       return <circle key={i} data-testid="gnss-dot" cx={cx} cy={cy} r={1.5} fill="#f59e0b" />
     })
 

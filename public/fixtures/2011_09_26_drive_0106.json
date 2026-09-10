@@ -1,0 +1,56 @@
+{
+  "driveId": "2011_09_26_drive_0106",
+  "source": "mock",
+  "createdAt": "2026-09-10T13:46:55.607Z",
+  "response": {
+    "routes": [
+      {
+        "id": "c5ce4c54-fb19-45b9-b0c0-684e61359eb5",
+        "sections": [
+          {
+            "id": "0469b539-b1c0-4205-97cc-19f4af557558",
+            "type": "vehicle",
+            "departure": {
+              "time": "2026-09-10T15:46:54+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0099475,
+                  "lng": 8.4234837
+                },
+                "originalLocation": {
+                  "lat": 49.0099476,
+                  "lng": 8.4234838
+                }
+              }
+            },
+            "arrival": {
+              "time": "2026-09-10T15:47:27+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0109256,
+                  "lng": 8.4232651
+                },
+                "originalLocation": {
+                  "lat": 49.0109257,
+                  "lng": 8.4232652
+                }
+              }
+            },
+            "summary": {
+              "duration": 33,
+              "length": 110,
+              "baseDuration": 16
+            },
+            "polyline": "BG2xqv9C4jkiQuGvB8azF0U_EoHxB",
+            "transport": {
+              "mode": "car"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "derived": []
+}

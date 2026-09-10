@@ -15,6 +15,9 @@ export interface MapViewProps {
   carIndex?: number
   /** DR 航位推算轨迹（缺省不渲染）。紫折线：匹配路线（蓝）之下；并计入 setLookAtData bounds 防初始视野裁剪 */
   drPath?: Array<[number, number]>
+  /** 「接收机实际报的 GNSS」流（缺省 = trace）——散点从它画，`noFix` 帧不画。
+   *  与 trace 同下标对齐；失锁期位置被冻结，故直接省略而非画一坨不动的点。 */
+  gnssPath?: TrajPoint[]
 }
 
 /** HERE Maps JS API 3.1 命名空间的最小结构声明——script 标签加载、无官方 npm 类型。
@@ -96,15 +99,26 @@ function carIcon(here: HereNS, cache: Map<number, unknown>, compassDeg: number):
 
 /** 地图视图：mapStatus='ok' 初始化 HERE 地图（App 层保证此时 window.H 已就绪）；否则渲染无底图 SVG 兜底。
  *  Step2：upToIndex 归一为 upTo（缺省全量）→ HERE 散点走增量喷洒 effect；carIndex 驱动车标。 */
-export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, carIndex, drPath }: MapViewProps) {
+export default function MapView({
+  trace,
+  derived,
+  mapStatus,
+  apikey,
+  upToIndex,
+  carIndex,
+  drPath,
+  gnssPath,
+}: MapViewProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const here = mapStatus === 'ok' ? getHere() : null // 'ok' 但 H 缺席时兜底走 SVG，防白屏
   const upTo = upToIndex ?? trace.length - 1
+  const dots = gnssPath ?? trace // 散点源（默认真值；给了 gnssPath 就是接收机实际报的流）
 
   // HERE 路径回放状态（随组件卸载/建图重建重置；App 换轨迹时先 setData(null) 卸载本组件）
   const mapRef = useRef<HereMap | null>(null)
   const sprayedRef = useRef<number[]>([]) // 已洒下标（升序）
-  const objRef = useRef<unknown[]>([]) // 与 sprayedRef 平行的 Circle 对象
+  const objRef = useRef<Array<unknown | null>>([]) // 与 sprayedRef 平行；noFix 帧占位 null（不画但记账）
+  const dotsRef = useRef<TrajPoint[] | null>(null) // 账本所属散点源（换源即重洒）
   const sprayedMapRef = useRef<HereMap | null>(null) // 账本所属地图实例（stale-map 守卫）
   const carRef = useRef<HereMarker | null>(null)
   const iconCacheRef = useRef(new Map<number, unknown>())
@@ -124,6 +138,7 @@ export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, 
     sprayedRef.current = []
     objRef.current = []
     sprayedMapRef.current = null
+    dotsRef.current = dots
     carRef.current = null
 
     // DR 航位推算折线（紫）——先于匹配路径 addObject → 渲染于蓝线之下（HERE 对象按添加序叠放）。
@@ -187,22 +202,35 @@ export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, 
       sprayedMapRef.current = map
       sprayedRef.current = [] // 旧图对象已随 dispose 死亡，账本清零全量重洒
       objRef.current = []
+      dotsRef.current = dots
+    }
+    // 散点源换人（隧道开关 → noFix 掩码变）：账本整体失效，清空重洒。
+    // 不做这步会出现「该消失的点不消失、该回来的点不回来」——sprayPlan 只认下标增减，看不见掩码变化。
+    if (dotsRef.current !== dots) {
+      for (const o of objRef.current) if (o) map.removeObject(o)
+      dotsRef.current = dots
+      sprayedRef.current = []
+      objRef.current = []
     }
     const { removeIdx, addIdx } = sprayPlan(sprayedRef.current, Math.min(upTo, trace.length - 1), 2)
     for (const i of removeIdx) {
       const k = sprayedRef.current.indexOf(i)
-      map.removeObject(objRef.current.splice(k, 1)[0])
+      const obj = objRef.current.splice(k, 1)[0]
+      if (obj) map.removeObject(obj)
       sprayedRef.current.splice(k, 1)
     }
     for (const i of addIdx) {
-      const obj = new here.map.Circle({ lat: trace[i].lat, lng: trace[i].lng }, 3, {
-        style: { fillColor: 'rgba(245, 158, 11, 0.9)', strokeColor: '#f59e0b', lineWidth: 1 },
-      })
-      map.addObject(obj)
+      // noFix 帧记账不画（占位 null 保持与 sprayedRef 平行，撤销时靠上面的 null 守卫跳过）
+      const obj = dots[i]?.noFix
+        ? null
+        : new here.map.Circle({ lat: dots[i].lat, lng: dots[i].lng }, 3, {
+            style: { fillColor: 'rgba(245, 158, 11, 0.9)', strokeColor: '#f59e0b', lineWidth: 1 },
+          })
+      if (obj) map.addObject(obj)
       sprayedRef.current.push(i)
       objRef.current.push(obj)
     }
-  }, [here, upTo, trace])
+  }, [here, upTo, trace, dots])
 
   // 车标：位置沿匹配路径垂足，航向烘焙进分桶图标。
   // volatility: true（评审 major 修正）：HERE 3.1 非易失对象的 setGeometry 走引擎 100ms debounce
@@ -255,6 +283,7 @@ export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, 
           upToIndex={upTo}
           car={car}
           drPath={drPath}
+          gnssPath={gnssPath}
         />
       </div>
     )

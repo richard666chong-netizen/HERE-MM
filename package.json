@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "record": "node scripts/record-fixtures.mjs"
+    "record": "node scripts/record-fixtures.mjs",
+    "record:dr": "vite-node scripts/record-fixtures-dr.ts"
   },
   "dependencies": {
     "react": "^19.1.0",

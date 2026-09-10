@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import trace0033 from '../../public/sample/here/2011_09_30_drive_0033.json'
 import trace0093 from '../../public/sample/here/2011_09_26_drive_0093.json'
+import trace0096 from '../../public/sample/here/2011_09_26_drive_0096.json'
+import trace0106 from '../../public/sample/here/2011_09_26_drive_0106.json'
+import trace0042 from '../../public/sample/here/2011_10_03_drive_0042.json'
 import drArtifact from '../../public/sample/here/2011_09_26_drive_0093.dr.json'
 import { deadReckon, detectOutages } from '../lib/deadReckoning'
-import { haversineM } from '../lib/geo'
+import { buildGnssFeed, TUNNEL_START_FRACTION } from '../lib/gnssFeed'
+import { haversineM, nearestOnPolyline } from '../lib/geo'
+import type { LatLng } from '../lib/geo'
 import type { TrajPoint } from '../types'
 
 /**
@@ -193,6 +198,80 @@ describe('deadReckoning（多速率 1:10 航位推算）', () => {
     expect(haversineM(positions[50], toLatLng(50, 0))).toBeCloseTo(0.343, 1)
   })
 
+  // Step5 修正：GNSS 冻结（位移≈0）与 GNSS 跳变（多径毛刺）必须分开回退——
+  // 前者回退「当前」IMU/轮速（speedMps），后者才沿用上一帧合理速度。
+  // 原实现两支都用 lastGoodSpeed，失锁期车速变化时 DR 会保持旧速度（0106 全程失锁会原地不动）。
+  it('V7 冻结期速度回退：GNSS 冻结时用当前 IMU 轮速（3 m/s → 12m），非最后一次位移速度（10 m/s → 40m）', () => {
+    const trace = buildTrace(
+      Array.from({ length: 60 }, (_, i) => ({
+        eastM: Math.min(i, 19), // 帧 20–59 GNSS 冻结在帧 19 位置
+        northM: 0,
+        yawDeg: 0,
+        speedMps: i < 20 ? 10 : 3, // 冻结期真实车速降到 3 m/s（惯导/轮速仍有效）
+        numsats: i < 20 ? 10 : 3,
+      })),
+    )
+    const { positions, corrected } = deadReckon(trace)
+    expect(haversineM(positions[19], [trace[19].lat, trace[19].lng])).toBeCloseTo(0, 6) // 失锁前锁步
+    // 帧 20–59：40 帧 × 0.1s × 3 m/s = 12m（旧实现沿用 lastGoodSpeed=10 → 40m）
+    expect(haversineM(positions[59], positions[19])).toBeCloseTo(12, 1)
+    for (const i of [20, 30, 40, 50]) expect(corrected[i]).toBe(false)
+  })
+
+  it('V8 冻结期静止：IMU 轮速 ≈0（−0.03 静止噪声）→ DR 原地不动（旧实现沿用 10 m/s → 推进 40m）', () => {
+    const trace = buildTrace(
+      Array.from({ length: 60 }, (_, i) => ({
+        eastM: Math.min(i, 19),
+        northM: 0,
+        yawDeg: 0,
+        speedMps: i < 20 ? 10 : -0.03, // KITTI 静止段 GPS 测速噪声（实测最小 −0.03）
+        numsats: i < 20 ? 10 : 3,
+      })),
+    )
+    const { positions } = deadReckon(trace)
+    expect(haversineM(positions[59], positions[19])).toBeCloseTo(0, 1)
+  })
+
+  // Step6：仿真隧道里接收机**没有定位解但卫星数照样高**（0042 是高速轨迹，卫星 8+ 常态）。
+  // 只按 numsats 判可信度会让 1Hz 更新把 DR 反复拉回冻结位置——隧道根本不漂移。
+  it('V9 noFix 纪元跳过更新：卫星 10 颗但无定位解 → corrected=false，DR 继续递推 40m', () => {
+    const base = buildTrace(
+      Array.from({ length: 60 }, (_, i) => ({
+        eastM: Math.min(i, 19), // 帧 20 起 GNSS 冻结
+        northM: 0,
+        yawDeg: 0,
+        speedMps: 10,
+        numsats: 10, // 卫星数恒高——旧门控（numsats>6）会放行
+      })),
+    )
+    const trace = base.map((p, i) => (i < 20 ? p : { ...p, noFix: true }))
+    const { positions, corrected } = deadReckon(trace)
+    for (const i of [20, 30, 40, 50]) expect(corrected[i]).toBe(false) // 旧实现此处为 true
+    expect(haversineM(positions[59], positions[19])).toBeCloseTo(40, 1) // 10 m/s × 4s
+    for (const i of [20, 30, 40, 50]) expect(positions[i].every(Number.isFinite)).toBe(true)
+  })
+
+  it('V10 门控对照（为什么必须改）：标 noFix → DR 跟住真值；不标 → 被摁在隧道口，落后真值 >10m', () => {
+    const mk = (noFix: boolean) =>
+      buildTrace(
+        Array.from({ length: 60 }, (_, i) => ({
+          eastM: Math.min(i, 19), // GNSS 帧 20 起冻结（车实际继续走到 59m）
+          northM: 0,
+          yawDeg: 0,
+          speedMps: 10,
+          numsats: 10,
+        })),
+      ).map((p, i) => (i < 20 || !noFix ? p : { ...p, noFix: true }))
+    const errVsTruth = (trace: ReturnType<typeof mk>) => {
+      const { positions } = deadReckon(trace)
+      return haversineM(positions[59], toLatLng(59, 0))
+    }
+    // 1Hz 更新对冻结位置的平衡态是有界振荡（~24m 分离），并非"压回原处"——
+    // 所以对照口径必须对着真值：DR 跟不住车，才是隧道失效的真正表现
+    expect(errVsTruth(mk(true))).toBeLessThanOrEqual(1) // 自由递推，10 m/s × 4s 正好走到 59m
+    expect(errVsTruth(mk(false))).toBeGreaterThan(10) // 被更新拽住，落后真值 ~15m
+  })
+
   it('SMOKE 真实 0093：无 NaN，失锁段内 DR−GNSS 分离 >5m（最大分离落在长失锁段末尾，人审指标）', () => {
     const t93 = trace0093 as unknown as TrajPoint[]
     const { positions } = deadReckon(t93)
@@ -214,6 +293,79 @@ describe('deadReckoning（多速率 1:10 航位推算）', () => {
     console.log(
       `[smoke 0093] maxSep=${maxAll.toFixed(1)}m @ idx ${argAll} (numsats=${t93[argAll].numsats}), maxSep within outage=${maxIn.toFixed(1)}m`,
     )
+  })
+
+  // Step5 DR 精度回归：对着**可信真值**量 DR 误差。
+  // 0096/0106 的失锁期 pos_accuracy ≤1.8m（INS 桥接保持可信）——这正是它们与 0093 的区别：
+  // 0093 失锁期真值自身 ±21m（max 44.3m），DR 误差与真值误差无法分离，故 0093 不做精度断言。
+  it('DR 精度 0096：失锁 35s/218m 自由递推误差 ≤13m，GNSS 恢复后 1Hz 更新纠回 ≤3m', () => {
+    const t = trace0096 as unknown as TrajPoint[]
+    const { positions, corrected } = deadReckon(buildGnssFeed(t))
+    const err = t.map((p, i) => haversineM(positions[i], [p.lat, p.lng]))
+    expect(Math.max(...err)).toBeLessThanOrEqual(13) // 实测 12.37 m @ t≈41s（线性漂移，占失锁里程 5.7%）
+    expect(err[err.length - 1]).toBeLessThanOrEqual(3) // 实测 2.25 m（恢复后 5s 内纠回）
+    expect(corrected.filter(Boolean).length).toBeGreaterThan(0) // 恢复段有可信历元
+    expect(corrected[0]).toBe(false) // 帧 0 无定位解 → 播种但不更新
+  })
+
+  it('DR 精度 0106：全程无定位解 22.7s/114m（含 3 转弯）纯递推误差 ≤5m，且一次更新都没有', () => {
+    const t = trace0106 as unknown as TrajPoint[]
+    const { positions, corrected } = deadReckon(buildGnssFeed(t))
+    const err = t.map((p, i) => haversineM(positions[i], [p.lat, p.lng]))
+    expect(Math.max(...err)).toBeLessThanOrEqual(5) // 实测 4.39 m
+    expect(corrected.some(Boolean)).toBe(false) // 全程 numsats=2 → 无可信历元
+  })
+
+  it('DR 空转反证：直接喂原始 OXTS（不冻结）时 DR 只复读真值——这是建 gnssFeed 的原因', () => {
+    const t = trace0096 as unknown as TrajPoint[]
+    const { positions } = deadReckon(t)
+    const err = t.map((p, i) => haversineM(positions[i], [p.lat, p.lng]))
+    expect(Math.max(...err)).toBeLessThanOrEqual(3) // 实测 2.51 m：失锁期 OXTS 是 INS 桥接解 ≈ 真值
+  })
+
+  // Step6 仿真隧道精度：宿主 0042（高速），60s 拒止 @30% 起点。
+  // 度量用 nearestOnPolyline（DR 点 → 真值折线的最近距离 = 横向偏移，与渲染同源）——
+  // 不能用 haversine：沿轨误差（里程标定偏差）看着也很大，但 DR 线其实还压在路上，MM 无事可做。
+  it('DR 精度 0042（仿真隧道 60s）：横向漂出高速 ~59m，出隧道后回到路上', () => {
+    const t = trace0042 as unknown as TrajPoint[]
+    const { positions } = deadReckon(buildGnssFeed(t, { tunnelDurationS: 60 }))
+    const truth: LatLng[] = t.map((p) => [p.lat, p.lng])
+    const start = TUNNEL_START_FRACTION * t[t.length - 1].timestamp
+    const end = start + 60
+    let maxCross = 0
+    for (let i = 0; i < t.length; i++) {
+      if (t[i].timestamp < start || t[i].timestamp >= end) continue
+      maxCross = Math.max(maxCross, nearestOnPolyline(positions[i] as LatLng, truth).distM)
+    }
+    const lastCross = nearestOnPolyline(positions[t.length - 1] as LatLng, truth).distM
+    console.log(
+      `[tunnel 0042] 隧道 ${start.toFixed(1)}–${end.toFixed(1)}s | 横向漂移 max=${maxCross.toFixed(1)}m | 末帧=${lastCross.toFixed(2)}m`,
+    )
+    expect(maxCross).toBeGreaterThanOrEqual(55) // 实测 59.x m —— 低于此说明门控/冻结之一失效
+    expect(maxCross).toBeLessThanOrEqual(62) // 高于此说明 DR 数学被改动
+    expect(lastCross).toBeLessThanOrEqual(2) // 出隧道 22s 内被 1Hz 更新纠回
+  })
+
+  // 隧道时长是场景参数：漂移随拒止时长增长，且**存在一个 MM 能力边界**——
+  // 30s（横向 11m）仍在车道间距量级内，HERE 能绑对主路（fixture 即按 30s 录，见 fixtures.test）；
+  // 60s（横向 59m）超出后 HERE 会跟着漂移匹配到旁路（实测 2 段 / max 49.85m）——这是量产里
+  // MM 必须与 DR 紧耦合（map-aided）而非串行的直接证据。
+  it('隧道时长可调：0042 @30s 横向 ≈11m（MM 边界内）vs @60s ≈59m（越界）', () => {
+    const t = trace0042 as unknown as TrajPoint[]
+    const start = TUNNEL_START_FRACTION * t[t.length - 1].timestamp
+    const truth: LatLng[] = t.map((p) => [p.lat, p.lng])
+    const maxCrossAt = (d: number) => {
+      const { positions } = deadReckon(buildGnssFeed(t, { tunnelDurationS: d }))
+      let m = 0
+      for (let i = 0; i < t.length; i++) {
+        if (t[i].timestamp < start || t[i].timestamp >= start + d) continue
+        m = Math.max(m, nearestOnPolyline(positions[i] as LatLng, truth).distM)
+      }
+      return m
+    }
+    expect(maxCrossAt(30)).toBeGreaterThanOrEqual(8) // 实测 ~11m
+    expect(maxCrossAt(30)).toBeLessThanOrEqual(15)
+    expect(maxCrossAt(60)).toBeGreaterThanOrEqual(55) // 实测 58.6m
   })
 
   // Step4 T4: py/TS 同步验证——scripts/rerecord-0093-dr.py 复刻 deadReckon 落盘 artifact，

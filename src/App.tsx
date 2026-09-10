@@ -6,12 +6,22 @@ import SourceBadge from './components/SourceBadge'
 import StatsPanel from './components/StatsPanel'
 import { usePlayback } from './hooks/usePlayback'
 import { deadReckon, detectOutages } from './lib/deadReckoning'
+import { buildGnssFeed } from './lib/gnssFeed'
+import { haversineM } from './lib/geo'
 import { derive } from './lib/derive'
 import { cacheKey, matchService, readCache, writeCache } from './lib/fixtureStore'
-import { loadHereMaps } from './lib/hereLoader'
+import { loadHereMaps, probeBasemap } from './lib/hereLoader'
 import type { CacheEntry, DerivedPoint, TrajPoint } from './types'
 
-const DRIVE_IDS = ['2011_09_30_drive_0033', '2011_09_26_drive_0011', '2011_09_26_drive_0093'] // 顶栏下拉顺序 0033/0011/0093
+// 顶栏下拉顺序：对照组 0033/0011 → 退化 0093（真值不可信）→ 退化 0096/0106（真值可信，posmode 失锁）
+const DRIVE_IDS = [
+  '2011_09_30_drive_0033',
+  '2011_09_26_drive_0011',
+  '2011_09_26_drive_0093',
+  '2011_09_26_drive_0096',
+  '2011_09_26_drive_0106',
+  '2011_10_03_drive_0042',
+] // 0042 压末尾：仿真隧道宿主（高速，60s 拒止 → 横向漂移 58.6m）
 
 // spec L45 双模式：工程分析（静态对比）/ 客户演示（回放）
 const MODES = [
@@ -22,9 +32,14 @@ type Mode = (typeof MODES)[number]['id']
 
 interface DriveData {
   trace: TrajPoint[]
+  /** 退化 GNSS 流（散点画它、DR 递推用它）；隧道关闭且无 posmode 时与 trace 同引用 */
+  gnssFeed: TrajPoint[]
   derived: DerivedPoint[]
   entry: CacheEntry
 }
+
+/** 仿真隧道时长选项（秒）；0 = 关闭。轨迹/航向/速度全是真实 KITTI 数据，只有「拒止多久」是场景设定。 */
+const TUNNEL_OPTIONS = [0, 30, 60, 120] as const
 
 /** mapStatus（Step1 生命周期约定）：空 key 同步 fallback 不调 loader；非空异步定夺，pending 渲染加载占位 */
 type MapStatus = 'pending' | 'ok' | 'fallback'
@@ -35,6 +50,8 @@ export default function App() {
   const apikey = import.meta.env.VITE_HERE_KEY ?? ''
 
   const [driveId, setDriveId] = useState(DRIVE_IDS[0])
+  const [tunnelS, setTunnelS] = useState(0) // 仿真隧道时长（0 = 关闭）
+  const variant = tunnelS ? `t${tunnelS}` : '' // 缓存分档：请求体随隧道变，不分档会命中旧缓存
   const [reloadToken, setReloadToken] = useState(0) // 「清除缓存」后重载当前 driveId
   const [data, setData] = useState<DriveData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -44,11 +61,28 @@ export default function App() {
 
   // DR 航位推算（Step4）：门控阈值 4（≤4 星 = 失锁叙事；阈值 6 会误伤 0033 的 5 星段），
   // 轨迹含失锁点才递推，否则 null → drPath 缺省不渲染。仅随 data 重算，不进回放逐帧路径。
+  // Step5：递推的输入是 buildGnssFeed 的退化 GNSS 流（失锁期冻在最后一帧有效定位）——
+  // OXTS 在失锁期是 INS 桥接解 ≈ 真值，直接喂 DR 只会复读真值（无 posmode 的旧数据原样返回）。
   // 语义不变：deviationM 仍是原始 GNSS→匹配路线（= DR+MM 联合纠偏量），统计/回放管线不动。
-  const dr = useMemo(
-    () => (data && detectOutages(data.trace, 4).some(Boolean) ? deadReckon(data.trace) : null),
-    [data],
-  )
+  // 门控两路：真实失锁（numsats≤4，保住 0093 的 DR 层）+ 流内 noFix 帧（仿真隧道）。
+  // 两者都无 → null → drPath 缺省不渲染。
+  const dr = useMemo(() => {
+    if (!data) return null
+    const hasOutage =
+      detectOutages(data.trace, 4).some(Boolean) || data.gnssFeed.some((p) => p.noFix)
+    return hasOutage ? deadReckon(data.gnssFeed) : null
+  }, [data])
+
+  // DR 漂移读数（演示口径左半边）：隧道/失锁期 DR 推算位置与真值的最大偏差。
+  // 右半边是 StatsPanel 既有的 deviationM（真值→匹配路线）。二者对比即「DR 漂了 67m，MM 绑路后 X m」。
+  const drMaxDriftM = useMemo(() => {
+    if (!dr || !data) return undefined
+    let max = 0
+    for (let i = 0; i < data.trace.length; i++) {
+      max = Math.max(max, haversineM(dr.positions[i], [data.trace[i].lat, data.trace[i].lng]))
+    }
+    return max
+  }, [dr, data])
 
   const lastIndex = data && data.trace.length > 0 ? data.trace.length - 1 : 0
   const pb = usePlayback(lastIndex) // 回放状态住在 App：tab 切换保留进度，换轨迹自动复位
@@ -58,8 +92,13 @@ export default function App() {
     if (!apikey) return // 空 key：同步 fallback，loader 永不被调
     let cancelled = false
     loadHereMaps(apikey)
-      .then(() => {
-        if (!cancelled) setMapStatus('ok')
+      // SDK 脚本到位 ≠ 瓦片能到达：企业网/VPN 可只放行 js.api.here.com 而静默拦截瓦片，
+      // 那种情况会留一块无提示的白板（用户 2026-09-10 实测），故置 'ok' 前探一次瓦片链路
+      .then(() => probeBasemap(apikey))
+      .then((tilesOk) => {
+        if (cancelled) return
+        if (!tilesOk) console.warn('[hereLoader] 底图瓦片不可达（检查网络 / VPN）→ 落 SVG 兜底')
+        setMapStatus(tilesOk ? 'ok' : 'fallback')
       })
       .catch((err: unknown) => {
         // Bug A 诊断埋点：浏览器控制台留下 loader 失败的真实原因（超时/网络/脚本错）
@@ -83,25 +122,32 @@ export default function App() {
         const trace = (await traceRes.json()) as TrajPoint[]
         // DR 增强（Step4 T4）：门控阈值 4——轨迹含失锁点时，live 请求的 trace 用 DR 位置
         // 替换 lat/lng（其余字段透传）。0011/0033 的 ≤4 星点为 0 → 零变化。
+        // Step5：递推输入为 buildGnssFeed 的退化流（posmode==0 期冻结；无该列的旧数据原样）。
         // 缓存/fixture 路径不增强（离线即所录即所得）。
-        const drPositions = apikey && detectOutages(trace, 4).some(Boolean) ? deadReckon(trace).positions : null
+        const gnssFeed = buildGnssFeed(trace, { tunnelDurationS: tunnelS || undefined })
+        const hasOutage = detectOutages(trace, 4).some(Boolean) || gnssFeed.some((p) => p.noFix)
+        const drPositions = apikey && hasOutage ? deadReckon(gnssFeed).positions : null
         const liveTrace = drPositions
-          ? trace.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] }))
+          ? gnssFeed.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] }))
           : trace
-        const entry = await matchService(driveId, apikey ? { apikey, trace: liveTrace } : undefined)
+        const entry = await matchService(
+          driveId,
+          apikey ? { apikey, trace: liveTrace } : undefined,
+          variant,
+        )
         if (cancelled) return
         // 未缓存（fixture 的 derived 为空）→ 派生并回填缓存
         let derived = entry.derived
         if (derived.length === 0) {
           derived = derive(trace, entry.response)
-          writeCache({ ...entry, derived })
+          writeCache({ ...entry, derived }, variant)
         }
-        setData({ trace, derived, entry: { ...entry, derived } })
+        setData({ trace, gnssFeed, derived, entry: { ...entry, derived } })
       } catch (e) {
         // live entry 可能已写缓存但 derive 失败（如坏 polyline）——驱逐防毒化：
         // 缓存命中短路会绕过 fixture 回落，直到手动清缓存（Step3 终审 minor 采纳）
-        const cached = readCache(driveId)
-        if (cached?.source === 'live') localStorage.removeItem(cacheKey(driveId))
+        const cached = readCache(driveId, variant)
+        if (cached?.source === 'live') localStorage.removeItem(cacheKey(driveId, variant))
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       } finally {
         if (!cancelled) setLoading(false)
@@ -111,7 +157,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [driveId, reloadToken])
+  }, [driveId, reloadToken, tunnelS])
 
   /** 遍历 localStorage 删除 here-mm-cache:* 前缀键后重载当前 driveId */
   function handleClearCache(): void {
@@ -127,7 +173,7 @@ export default function App() {
   /** 「录制」（spec L50 顶栏三件套落点）：删当前 driveId 缓存并重载 → 缓存 miss 后走 live；
    *  live 失败自动落回 fixture（演示不中断）。仓库文件级回写归 scripts/record-fixtures.mjs。 */
   function handleRecord(): void {
-    localStorage.removeItem(cacheKey(driveId))
+    localStorage.removeItem(cacheKey(driveId, variant))
     setReloadToken((t) => t + 1)
   }
 
@@ -171,6 +217,27 @@ export default function App() {
           {DRIVE_IDS.map((id) => (
             <option key={id} value={id}>
               {id}
+            </option>
+          ))}
+        </select>
+        {/* 仿真隧道旋钮：口径必须写在界面上——数据全真，只有「GNSS 被拒止多久」是场景参数 */}
+        <label
+          htmlFor="tunnel-select"
+          style={{ fontSize: 13, color: '#374151', marginLeft: '0.25rem' }}
+          title="仿真：GNSS 拒止时长。轨迹 / 航向 / 速度均为真实 KITTI 数据，仅「拒止多久」是场景设定"
+        >
+          隧道
+        </label>
+        <select
+          id="tunnel-select"
+          value={tunnelS}
+          onChange={(e) => setTunnelS(Number(e.target.value))}
+          style={{ padding: '0.25rem 0.5rem' }}
+          title="仿真：GNSS 拒止时长（0.3×轨迹时长处起算，超出轨迹尾部则截断）"
+        >
+          {TUNNEL_OPTIONS.map((s) => (
+            <option key={s} value={s}>
+              {s === 0 ? '关闭' : `${s}s`}
             </option>
           ))}
         </select>
@@ -241,12 +308,17 @@ export default function App() {
               upToIndex={mode === 'demo' ? pb.index : data.trace.length - 1}
               carIndex={mode === 'demo' ? pb.index : undefined}
               drPath={dr?.positions}
+              gnssPath={data.gnssFeed}
             />
           ) : null}
         </section>
         <aside style={{ width: 380, flexShrink: 0 }}>
           {mode === 'analysis' ? (
-            <StatsPanel trace={data?.trace ?? []} derived={data?.derived ?? []} />
+            <StatsPanel
+              trace={data?.trace ?? []}
+              derived={data?.derived ?? []}
+              drMaxDriftM={drMaxDriftM}
+            />
           ) : data ? (
             <DeviationReplayChart trace={data.trace} derived={data.derived} index={pb.index} />
           ) : null}

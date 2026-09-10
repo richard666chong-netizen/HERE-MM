@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import d0011 from '../../public/sample/here/2011_09_26_drive_0011.json'
 import d0033 from '../../public/sample/here/2011_09_30_drive_0033.json'
 import d0093 from '../../public/sample/here/2011_09_26_drive_0093.json'
+import d0096 from '../../public/sample/here/2011_09_26_drive_0096.json'
+import d0106 from '../../public/sample/here/2011_09_26_drive_0106.json'
+import d0042 from '../../public/sample/here/2011_10_03_drive_0042.json'
 
 interface TrajPoint {
   lat: number
@@ -11,6 +14,7 @@ interface TrajPoint {
   headingDeg: number
   speedMps: number
   numsats: number
+  posmode?: number // Step5 起退化样本携带；既有三条无此列（见下方 posmode 契约）
 }
 
 const REQUIRED_FIELDS = [
@@ -25,6 +29,9 @@ describe('bundled demo trajectories (contract)', () => {
     ['2011_09_26_drive_0011', d0011 as unknown as TrajPoint[], 233, -0.1],
     ['2011_09_30_drive_0033', d0033 as unknown as TrajPoint[], 1594, -0.1],
     ['2011_09_26_drive_0093', d0093 as unknown as TrajPoint[], 433, -12],
+    ['2011_09_26_drive_0096', d0096 as unknown as TrajPoint[], 475, -0.1], // 实测 min 0.329
+    ['2011_09_26_drive_0106', d0106 as unknown as TrajPoint[], 227, -0.2], // 起步静止段噪声，实测 min −0.081
+    ['2011_10_03_drive_0042', d0042 as unknown as TrajPoint[], 1170, -0.1], // 仿真隧道宿主，实测 min 9.35
   ])('%s', (_driveId, pts, expectedCount, minSpeedMps) => {
     expect(pts).toHaveLength(expectedCount)
     for (const p of pts) {
@@ -41,6 +48,20 @@ describe('bundled demo trajectories (contract)', () => {
     }
     for (let i = 1; i < pts.length; i++) {
       expect(pts[i].timestamp).toBeGreaterThan(pts[i - 1].timestamp)
+    }
+  })
+
+  // Step5 退化样本：posmode === 0（接收机无定位解）= 失锁硬判据，比 numsats 干净
+  // （36 个 drive 里只有 9 个出现过，0011/0033 恰好 0 帧）。既有三条样本不得回填该列。
+  it('posmode 失锁判据契约', () => {
+    const staleCount = (pts: TrajPoint[]) => pts.filter((p) => p.posmode === 0).length
+    expect(staleCount(d0096 as unknown as TrajPoint[])).toBe(333) // 70% 时长，最长连续 18.7s
+    expect(staleCount(d0106 as unknown as TrajPoint[])).toBe(227) // 全程无定位解
+    // 0042：真实的**间歇性**掉点（t=10.8–12.2s 段 1.5s + 48.9/74.5/102.5s 各 0.5s + 末尾 3s），
+    // 不是连续长失锁——仿真隧道是另外叠加的（见 gnssFeed 的 tunnelDurationS）
+    expect(staleCount(d0042 as unknown as TrajPoint[])).toBe(60)
+    for (const pts of [d0011, d0033, d0093]) {
+      expect((pts as unknown as TrajPoint[]).every((p) => p.posmode === undefined)).toBe(true)
     }
   })
 })

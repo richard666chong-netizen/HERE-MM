@@ -20,8 +20,10 @@ export interface DrResult {
  *
  *  速度来源（Step4 T4 修正）：GPS 多普勒速度（speedMps）在低卫星数时系统性偏低甚至负值，
  *  导致 DR 累积漂移。改用 GNSS 位移速度（|GNSS[k]−GNSS[k−1]|/dt）作为主速度源——
- *  反映实际运动而非多普勒测速。GNSS 冻结（位移≈0，如隧道）时回退 speedMps（惯导知道车在走）；
- *  GNSS 跳变（位移>50m/frame，如多径毛刺）时用上一帧合理速度。 */
+ *  反映实际运动而非多普勒测速。三档回退（Step5 修正，原实现两支都退 lastGoodSpeed）：
+ *    · 位移可用（0.5–20 m/s 且方向与 IMU 航向一致）→ 用位移速度
+ *    · 位移 ≈ 0（冻结流 / 隧道 / 停车）→ 用当前 speedMps（IMU 轮速），负数视为静止
+ *    · 位移越界或方向不符（多径毛刺）→ 沿用上一帧合理速度 */
 export function deadReckon(
   trace: TrajPoint[],
   opts?: { gain?: number; updateThreshold?: number },
@@ -51,7 +53,12 @@ export function deadReckon(
         if (dispSpeed > 0.5 && dispSpeed < 20 && dirDiff < 45) {
           speed = dispSpeed
           lastGoodSpeed = speed
+        } else if (dispSpeed <= 0.5) {
+          // GNSS 冻结（位移 ≈ 0：失锁期冻结流 / 隧道 / 停车）→ 回退「当前」IMU 轮速——
+          // 惯导知道车在走，也可能知道车停了。用 lastGoodSpeed 会让 0106 全程失锁原地不动。
+          speed = Math.max(0, trace[k].speedMps)
         } else {
+          // GNSS 跳变（位移 >20 m/s）或方向不符（>45°，多径毛刺）→ 沿用上一帧合理速度
           speed = lastGoodSpeed
         }
       } else {
@@ -64,7 +71,10 @@ export function deadReckon(
         p[1] + (step * Math.sin(c)) / (M_PER_DEG_LAT * Math.cos(p[0] * DEG)),
       ]
     }
-    if (k % 10 === 0 && trace[k].numsats > thr) {
+    // 历元可信 = 卫星够多 **且** 接收机确实有定位解。后者不能省：仿真隧道里（0042 高速段）
+    // 卫星数照样 8+，只看 numsats 会让更新把 DR 拽回隧道口，隧道永远漂不起来（V10 是活文档）。
+    // 无 noFix 字段的既有轨迹该条件恒真 → 行为逐位不变（0093 py-sync 0.000008m 即证）。
+    if (k % 10 === 0 && trace[k].numsats > thr && !trace[k].noFix) {
       innovations[k] = haversineM([trace[k].lat, trace[k].lng], p)
       p = [p[0] + gain * (trace[k].lat - p[0]), p[1] + gain * (trace[k].lng - p[1])]
       corrected[k] = true
