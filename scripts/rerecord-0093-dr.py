@@ -153,6 +153,35 @@ def main():
     req = urllib.request.Request(url, data=body, method='POST')
     req.add_header('Content-Type', 'application/json')
 
+    # Corporate proxy support: detect .NET default proxy (VW webproxy) if direct DNS fails
+    proxy_handler = None
+    try:
+        import socket
+        socket.getaddrinfo('router.hereapi.com', 443, socket.AF_INET, socket.SOCK_STREAM)
+    except socket.gaierror:
+        # Try .NET-style proxy detection via environment or known corporate proxy
+        proxy_url = os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY')
+        if not proxy_url:
+            try:
+                # PowerShell [System.Net.WebRequest]::DefaultWebProxy fallback
+                import subprocess
+                result = subprocess.run(
+                    ['powershell', '-Command',
+                     '[System.Net.WebRequest]::DefaultWebProxy.GetProxy("https://router.hereapi.com").AbsoluteUri'],
+                    capture_output=True, text=True, timeout=5)
+                proxy_url = result.stdout.strip()
+            except Exception:
+                pass
+        if proxy_url:
+            print(f'Using proxy: {proxy_url}')
+            proxy_handler = urllib.request.ProxyHandler({
+                'http': proxy_url,
+                'https': proxy_url,
+            })
+            # NTLM auth via environment (pip/requests style)
+            opener = urllib.request.build_opener(proxy_handler)
+            urllib.request.install_opener(opener)
+
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             live_resp = json.loads(resp.read().decode('utf-8'))
