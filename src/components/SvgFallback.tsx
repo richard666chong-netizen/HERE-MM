@@ -11,6 +11,8 @@ export interface SvgFallbackProps {
   upToIndex?: number
   /** 回放车标（undefined = 无）。位置由 MapView 归一后传入；compassDeg = 罗盘航向（0=北、顺时针，已由 MapView 从 IMU yaw 转换） */
   car?: { lat: number; lng: number; compassDeg: number }
+  /** DR 航位推算轨迹（缺省不渲染）。紫虚线：GNSS 散点之上、匹配路线（蓝）之下；并计入画幅 bbox 防裁剪 */
+  drPath?: Array<[number, number]>
 }
 
 /** GNSS 散点抽稀：每 ⌈n/800⌉ 取 1，始终保留首尾点 */
@@ -27,11 +29,13 @@ const SCALE_BAR_STEPS_M = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 2
 
 /** 无底图 SVG 渲染：等距圆柱投影（标准纬线取 bbox 中点纬度，x 乘 cos(midLat)——防 49° 纬度图形 1.52× 横向变形），
  *  复用 geo.toLocalM（以 bbox 中心为原点）避免两套投影实现分叉。 */
-export default function SvgFallback({ trace, derived, width, height, upToIndex, car }: SvgFallbackProps) {
+export default function SvgFallback({ trace, derived, width, height, upToIndex, car, drPath }: SvgFallbackProps) {
   const geo = useMemo(() => {
+    // drPath 一并入 bbox（评审 minor 修正）：0093 尾段 15.5s 纯递推分离可达 26m 级，不纳入则紫线被画幅裁剪
     const all: LatLng[] = [
       ...trace.map((t) => [t.lat, t.lng] as LatLng),
       ...derived.map((d) => [d.matchedLatLng[0], d.matchedLatLng[1]] as LatLng),
+      ...(drPath ?? []),
     ]
     if (all.length === 0) return null
 
@@ -102,11 +106,45 @@ export default function SvgFallback({ trace, derived, width, height, upToIndex, 
       thin: thinIndices(trace.length),
       barX, barY, barUnits, barLabel,
     }
-  }, [trace, derived])
+  }, [trace, derived, drPath])
   if (!geo) return null
   const { vw, vh, xy, xyStr, thin, barX, barY, barUnits, barLabel } = geo
-  // 仍以全量 trace+derived 定 bbox——回放期间画幅稳定不跳变（upTo/car 不进 useMemo 依赖）
+  // 仍以全量 trace+derived+drPath 定 bbox——回放期间画幅稳定不跳变（upTo/car 不进 useMemo 依赖）
   const upTo = upToIndex ?? trace.length - 1
+
+  // 三层 z 序 = SVG 文档序（后者盖上者）。DR 层（紫虚线）规格：散点之上、匹配路线（蓝）之下；
+  // drPath 缺省时保持 Step1 原序（匹配路径在下、散点在上）——既有轨迹渲染零改动。
+  const drEl =
+    drPath && drPath.length > 0 ? (
+      <polyline
+        data-testid="dr-path"
+        points={drPath.map((p) => xyStr(p)).join(' ')}
+        fill="none"
+        stroke="#7c3aed"
+        strokeWidth={1.5}
+        strokeDasharray="6 3"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    ) : null
+  const matchedEl = (
+    <polyline
+      data-testid="matched-path"
+      points={derived.map((d) => xyStr(d.matchedLatLng as LatLng)).join(' ')}
+      fill="none"
+      stroke="#2563eb"
+      strokeWidth={1.5}
+      strokeLinejoin="round"
+      strokeLinecap="round"
+    />
+  )
+  // GNSS 散点（橙，抽稀；回放下只画已洒到的下标——filter 是每帧仅有的全量遍历）
+  const dotsEl = thin
+    .filter((i) => i <= upTo)
+    .map((i) => {
+      const [cx, cy] = xy([trace[i].lat, trace[i].lng])
+      return <circle key={i} data-testid="gnss-dot" cx={cx} cy={cy} r={1.5} fill="#f59e0b" />
+    })
 
   return (
     <svg
@@ -117,24 +155,18 @@ export default function SvgFallback({ trace, derived, width, height, upToIndex, 
       role="img"
       aria-label="无底图 SVG 轨迹渲染（GNSS 散点 + 匹配路径）"
     >
-      {/* 匹配路径折线（蓝） */}
-      <polyline
-        data-testid="matched-path"
-        points={derived.map((d) => xyStr(d.matchedLatLng as LatLng)).join(' ')}
-        fill="none"
-        stroke="#2563eb"
-        strokeWidth={1.5}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-
-      {/* GNSS 散点（橙，抽稀；回放下只画已洒到的下标——filter 是每帧仅有的全量遍历） */}
-      {thin
-        .filter((i) => i <= upTo)
-        .map((i) => {
-          const [cx, cy] = xy([trace[i].lat, trace[i].lng])
-          return <circle key={i} data-testid="gnss-dot" cx={cx} cy={cy} r={1.5} fill="#f59e0b" />
-        })}
+      {drEl ? (
+        <>
+          {dotsEl}
+          {drEl}
+          {matchedEl}
+        </>
+      ) : (
+        <>
+          {matchedEl}
+          {dotsEl}
+        </>
+      )}
 
       {/* 起点（绿）恒显；终点（红）行进到才出现 */}
       {trace.length > 0 && (

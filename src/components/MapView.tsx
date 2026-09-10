@@ -13,6 +13,8 @@ export interface MapViewProps {
   upToIndex?: number
   /** 回放：车标下标——位置取 derived[carIndex].matchedLatLng，航向取 trace[carIndex].headingDeg（IMU yaw）。缺省 = 无车标 */
   carIndex?: number
+  /** DR 航位推算轨迹（缺省不渲染）。紫折线：匹配路线（蓝）之下；并计入 setLookAtData bounds 防初始视野裁剪 */
+  drPath?: Array<[number, number]>
 }
 
 /** HERE Maps JS API 3.1 命名空间的最小结构声明——script 标签加载、无官方 npm 类型。
@@ -94,7 +96,7 @@ function carIcon(here: HereNS, cache: Map<number, unknown>, compassDeg: number):
 
 /** 地图视图：mapStatus='ok' 初始化 HERE 地图（App 层保证此时 window.H 已就绪）；否则渲染无底图 SVG 兜底。
  *  Step2：upToIndex 归一为 upTo（缺省全量）→ HERE 散点走增量喷洒 effect；carIndex 驱动车标。 */
-export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, carIndex }: MapViewProps) {
+export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, carIndex, drPath }: MapViewProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const here = mapStatus === 'ok' ? getHere() : null // 'ok' 但 H 缺席时兜底走 SVG，防白屏
   const upTo = upToIndex ?? trace.length - 1
@@ -124,6 +126,16 @@ export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, 
     sprayedMapRef.current = null
     carRef.current = null
 
+    // DR 航位推算折线（紫）——先于匹配路径 addObject → 渲染于蓝线之下（HERE 对象按添加序叠放）。
+    // 3.1 Polyline style 无 dash 选项，纯色实线（与 SVG 兜地的虚线观感有别，可接受）
+    if (drPath && drPath.length > 1) {
+      const ls = new here.geo.LineString()
+      for (const p of drPath) ls.pushLatLngAlt(p[0], p[1])
+      map.addObject(
+        new here.map.Polyline(ls, { style: { strokeColor: '#7c3aed', lineWidth: 2 } }),
+      )
+    }
+
     // 匹配路径（蓝）——回放下仍全量显示：路网先知，车在路上走
     if (derived.length > 1) {
       const ls = new here.geo.LineString()
@@ -133,7 +145,8 @@ export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, 
       )
     }
 
-    // 视野适配：H.geo.Rect 构造参数顺序 = (top, left, bottom, right)，即 (north, west, south, east)
+    // 视野适配：H.geo.Rect 构造参数顺序 = (top, left, bottom, right)，即 (north, west, south, east)。
+    // drPath 点一并纳入（评审 minor 修正）：0093 尾段纯递推分离可达 26m 级，不纳入则紫线被初始视野裁剪
     let north = -Infinity
     let south = Infinity
     let west = Infinity
@@ -141,6 +154,7 @@ export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, 
     for (const p of [
       ...trace.map((t) => [t.lat, t.lng] as [number, number]),
       ...derived.map((d) => [d.matchedLatLng[0], d.matchedLatLng[1]] as [number, number]),
+      ...(drPath ?? []),
     ]) {
       if (p[0] > north) north = p[0]
       if (p[0] < south) south = p[0]
@@ -159,7 +173,7 @@ export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, 
       sprayedMapRef.current = null
       carRef.current = null
     }
-  }, [here, apikey, trace, derived])
+  }, [here, apikey, trace, derived, drPath])
 
   // GNSS 喷洒：sprayPlan 纯函数算增量（前进补洒/回退回收），本 effect 只做对象映射。
   // ⚠ 无 cleanup（评审 blocker 修正）：React 在每次依赖变化时都先跑上一轮 cleanup，
@@ -233,7 +247,15 @@ export default function MapView({ trace, derived, mapStatus, apikey, upToIndex, 
         : undefined
     return (
       <div style={{ width: '100%', height: '100%' }}>
-        <SvgFallback trace={trace} derived={derived} width={960} height={540} upToIndex={upTo} car={car} />
+        <SvgFallback
+          trace={trace}
+          derived={derived}
+          width={960}
+          height={540}
+          upToIndex={upTo}
+          car={car}
+          drPath={drPath}
+        />
       </div>
     )
   }

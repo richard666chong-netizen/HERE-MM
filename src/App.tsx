@@ -1,16 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import DeviationReplayChart from './components/DeviationReplayChart'
 import MapView from './components/MapView'
 import ReplayBar from './components/ReplayBar'
 import SourceBadge from './components/SourceBadge'
 import StatsPanel from './components/StatsPanel'
 import { usePlayback } from './hooks/usePlayback'
+import { deadReckon, detectOutages } from './lib/deadReckoning'
 import { derive } from './lib/derive'
 import { cacheKey, matchService, readCache, writeCache } from './lib/fixtureStore'
 import { loadHereMaps } from './lib/hereLoader'
 import type { CacheEntry, DerivedPoint, TrajPoint } from './types'
 
-const DRIVE_IDS = ['2011_09_30_drive_0033', '2011_09_26_drive_0011'] // 顶栏下拉顺序 0033/0011
+const DRIVE_IDS = ['2011_09_30_drive_0033', '2011_09_26_drive_0011', '2011_09_26_drive_0093'] // 顶栏下拉顺序 0033/0011/0093
 
 // spec L45 双模式：工程分析（静态对比）/ 客户演示（回放）
 const MODES = [
@@ -40,6 +41,14 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [mapStatus, setMapStatus] = useState<MapStatus>(apikey ? 'pending' : 'fallback')
   const [mode, setMode] = useState<Mode>('analysis')
+
+  // DR 航位推算（Step4）：门控阈值 4（≤4 星 = 失锁叙事；阈值 6 会误伤 0033 的 5 星段），
+  // 轨迹含失锁点才递推，否则 null → drPath 缺省不渲染。仅随 data 重算，不进回放逐帧路径。
+  // 语义不变：deviationM 仍是原始 GNSS→匹配路线（= DR+MM 联合纠偏量），统计/回放管线不动。
+  const dr = useMemo(
+    () => (data && detectOutages(data.trace, 4).some(Boolean) ? deadReckon(data.trace) : null),
+    [data],
+  )
 
   const lastIndex = data && data.trace.length > 0 ? data.trace.length - 1 : 0
   const pb = usePlayback(lastIndex) // 回放状态住在 App：tab 切换保留进度，换轨迹自动复位
@@ -224,6 +233,7 @@ export default function App() {
               /* 分析模式传全量下标 → 同一喷洒路径一次洒满，HERE 地图实例跨 tab 复用不重建 */
               upToIndex={mode === 'demo' ? pb.index : data.trace.length - 1}
               carIndex={mode === 'demo' ? pb.index : undefined}
+              drPath={dr?.positions}
             />
           ) : null}
         </section>

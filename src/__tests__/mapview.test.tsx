@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import MapView from '../components/MapView'
-import type { DerivedPoint, TrajPoint } from '../types'
+import { derive } from '../lib/derive'
+import { toLocalM, type LatLng } from '../lib/geo'
+import type { DerivedPoint, ImportResponse, TrajPoint } from '../types'
+
+// 测试代码豁免静态 import public/（src 运行时路径禁止，见 Global Constraints）
+import f0093 from '../../public/fixtures/2011_09_26_drive_0093.json'
 
 // mapStatus='ok' 路径不在本层测：HERE SDK 需真实浏览器环境（jsdom 不加载外部脚本），
 // 由 T8 Step 5 真实 key 手动验收覆盖（计划 Task 7 Step 1 注明）。
@@ -78,5 +83,86 @@ describe('MapView replay（SvgFallback 路径）', () => {
     expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(3)
     expect(container.querySelectorAll('[data-testid="endpoint-marker"]').length).toBe(2) // 终点出现
     expect(container.querySelector('[data-testid="car-marker"]')).toBeNull()
+  })
+})
+
+// Step4 任务3：DR 图层。drPath 缺省 = 不渲染（既有轨迹零改动）；存在 = 紫虚线渲染于
+// 匹配路线（蓝）之下、GNSS 散点之上，且画幅（viewBox / HERE bounds）纳入 DR 点防裁剪。
+describe('MapView DR 图层（SvgFallback 路径）', () => {
+  const trace3 = [tp(49.0, 8.4), tp(49.01, 8.405), tp(49.02, 8.41)]
+  const derived3 = [dp(0, 49.0, 8.4), dp(1, 49.01, 8.405), dp(2, 49.02, 8.41)]
+  const drPath: Array<[number, number]> = [
+    [49.0, 8.4],
+    [49.01, 8.405],
+    [49.02, 8.41],
+  ]
+
+  it('drPath 存在：dr-path 折线非空、紫虚线样式、z 序 = 散点之上/匹配路线之下；缺省 → null', () => {
+    const { container } = render(
+      <MapView trace={trace3} derived={derived3} mapStatus="fallback" apikey="" drPath={drPath} />,
+    )
+    const dr = container.querySelector('[data-testid="dr-path"]')
+    expect(dr).toBeTruthy()
+    expect(dr?.getAttribute('points')).toMatch(/\S/) // 非空折线
+    expect(dr?.getAttribute('stroke')).toBe('#7c3aed') // 紫
+    expect(dr?.getAttribute('stroke-dasharray')).toBe('6 3') // 虚线（与匹配路线区分）
+    expect(dr?.getAttribute('stroke-width')).toBe('1.5')
+    // z 序 = 文档序（后者盖上者）：首散点 < dr-path < matched-path
+    const idx = (sel: string) =>
+      Array.from(container.querySelector('svg')!.children).indexOf(container.querySelector(sel)!)
+    expect(idx('[data-testid="dr-path"]')).toBeGreaterThan(idx('[data-testid="gnss-dot"]'))
+    expect(idx('[data-testid="dr-path"]')).toBeLessThan(idx('[data-testid="matched-path"]'))
+
+    // 不传 drPath → 无 DR 层（0011/0033 零改动）
+    const { container: c2 } = render(
+      <MapView trace={trace3} derived={derived3} mapStatus="fallback" apikey="" />,
+    )
+    expect(c2.querySelector('[data-testid="dr-path"]')).toBeNull()
+  })
+
+  it('多 section 拼接烟囱：0093 两段不相邻 polyline → derive 不抛错、matched-path 非空、gnss-dot 在场', () => {
+    // 0093 是 importSplitRoute 拆分路由（4 段），取空间不相邻的段 0 与段 2 合成 response
+    const secs = f0093.response.routes[0].sections
+    const response: ImportResponse = {
+      routes: [{ id: 'synthetic-2sec', sections: [secs[0], secs[2]] }],
+    }
+    const trace = [tp(48.99779, 8.46905), tp(48.99807, 8.4701), tp(48.99837, 8.47056)]
+    let derived: DerivedPoint[] = []
+    expect(() => {
+      derived = derive(trace, response)
+    }).not.toThrow()
+    expect(derived.length).toBe(3)
+    const { container } = render(
+      <MapView trace={trace} derived={derived} mapStatus="fallback" apikey="" />,
+    )
+    const path = container.querySelector('[data-testid="matched-path"]')
+    expect(path?.getAttribute('points')).toMatch(/\S/)
+    expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(3)
+  })
+
+  it('画幅纳入 drPath：DR 点北向 +0.01° 出 trace bbox → viewBox 高度按投影量增长（±10%）', () => {
+    // 宽度主导归一化（东西 0.025°≈1.8km > 增长后 vbH≈1.48km），两次渲染 unitsPerMeter 恒定，
+    // 高度增量可换算回米；trace 南北仅 0.001°≈111m，+0.01°≈1113m 的 DR 位移远超 5% 边距效应
+    const trace = [tp(49.0, 8.4), tp(49.001, 8.425)]
+    const vb = (path?: Array<[number, number]>) => {
+      const { container } = render(
+        <MapView trace={trace} derived={[]} mapStatus="fallback" apikey="" drPath={path} />,
+      )
+      const parts = (container.querySelector('svg')!.getAttribute('viewBox') as string)
+        .trim()
+        .split(/\s+/)
+        .map(Number)
+      return { h: parts[3] }
+    }
+    const h0 = vb().h
+    const h1 = vb([[49.011, 8.41]]).h // trace bbox 北缘 +0.01°；lng 在 bbox 内 → 宽度不变
+    // 期望增量 = 0.01° 纬向米量（复用组件同款投影 toLocalM）×1.1（5% 边距随新跨度进入）
+    const mid: LatLng = [49.0005, 8.4125]
+    const dyM = toLocalM([49.011, mid[1]], mid)[1] - toLocalM([49.001, mid[1]], mid)[1]
+    const spanXM = toLocalM([mid[0], 8.425], mid)[0] - toLocalM([mid[0], 8.4], mid)[0] // 东西全跨度（米）
+    const growthM = ((h1 - h0) * (spanXM * 1.1)) / 1000 // 单位→米：vbW=1.1·spanX 映射 1000 单位
+    const expectM = dyM * 1.1
+    expect(growthM).toBeGreaterThan(expectM * 0.9)
+    expect(growthM).toBeLessThan(expectM * 1.1)
   })
 })
