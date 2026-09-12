@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import SvgFallback from './SvgFallback'
-import { yawToCompassDeg } from '../lib/geo'
-import { sprayPlan } from '../lib/playback'
+import { yawToCompassDeg, thinByTimestamp } from '../lib/geo'
+import { getMarkerPopup, type MarkerType } from '../lib/markerInfo'
 import type { DerivedPoint, TrajPoint } from '../types'
 
 export interface MapViewProps {
@@ -18,6 +18,7 @@ export interface MapViewProps {
   /** 「接收机实际报的 GNSS」流（缺省 = trace）——散点从它画，`noFix` 帧不画。
    *  与 trace 同下标对齐；失锁期位置被冻结，故直接省略而非画一坨不动的点。 */
   gnssPath?: TrajPoint[]
+  interactive?: boolean
 }
 
 /** HERE Maps JS API 3.1 命名空间的最小结构声明——script 标签加载、无官方 npm 类型。
@@ -29,6 +30,7 @@ interface HereDefaultLayers {
 interface HereMarker {
   setGeometry(coord: { lat: number; lng: number }): void
   setIcon(icon: unknown): void
+  addEventListener(event: string, handler: () => void): void
 }
 
 interface HereMap {
@@ -66,7 +68,7 @@ interface HereNS {
     Icon: new (svg: string, opts?: { anchor?: { x: number; y: number } }) => unknown
   }
   geo: {
-    LineString: new () => { pushLatLngAlt: (lat: number, lng: number, alt?: number) => void }
+    LineString: new () => { pushPoint: (coord: { lat: number; lng: number }) => void; pushLatLngAlt: (lat: number, lng: number, alt?: number) => void }
     Rect: new (top: number, left: number, bottom: number, right: number) => unknown
   }
   mapevents: {
@@ -79,6 +81,8 @@ function getHere(): HereNS | null {
   if (typeof window === 'undefined') return null
   return (window as unknown as { H?: HereNS }).H ?? null
 }
+
+
 
 /** 车标图标：SVG 箭头烘焙航向（HERE 3.1 marker 无原生 rotation），5° 分桶缓存（≤72 个）。
  *  评审已实证 opts.anchor 平面对象可行（官方 3.1 文档示例即用字面量），无需兜底；
@@ -97,6 +101,42 @@ function carIcon(here: HereNS, cache: Map<number, unknown>, compassDeg: number):
   return icon
 }
 
+type IconMarkerType = 'gnss' | 'dr' | 'mm'
+
+function markerIcon(
+  here: HereNS,
+  cache: Map<string, unknown>,
+  type: IconMarkerType,
+  compassDeg: number,
+): unknown {
+  const bucket = ((Math.round(compassDeg / 5) * 5) % 360 + 360) % 360
+  const key = `${type}:${bucket}`
+  let icon = cache.get(key)
+  if (!icon) {
+    let svg: string
+    if (type === 'gnss') {
+      svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">` +
+        `<circle cx="18" cy="18" r="12" fill="none" stroke="#9ca3af" stroke-width="3"/>` +
+        `<line x1="18" y1="18" x2="18" y2="4" stroke="#9ca3af" stroke-width="2" ` +
+        `transform="rotate(${bucket} 18 18)"/></svg>`
+    } else if (type === 'dr') {
+      svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">` +
+        `<polygon points="20,3 31,29 20,22 9,29" fill="#eab308" stroke="#a16207" stroke-width="1.5" ` +
+        `transform="rotate(${bucket} 20 20)"/></svg>`
+    } else {
+      svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">` +
+        `<polygon points="20,3 31,29 20,22 9,29" fill="#2563eb" stroke="#1e40af" stroke-width="1.5" ` +
+        `transform="rotate(${bucket} 20 20)"/></svg>`
+    }
+    icon = new here.map.Icon(svg, { anchor: { x: 20, y: 20 } })
+    cache.set(key, icon)
+  }
+  return icon
+}
+
 /** 地图视图：mapStatus='ok' 初始化 HERE 地图（App 层保证此时 window.H 已就绪）；否则渲染无底图 SVG 兜底。
  *  Step2：upToIndex 归一为 upTo（缺省全量）→ HERE 散点走增量喷洒 effect；carIndex 驱动车标。 */
 export default function MapView({
@@ -108,11 +148,19 @@ export default function MapView({
   carIndex,
   drPath,
   gnssPath,
+  interactive,
 }: MapViewProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const here = mapStatus === 'ok' ? getHere() : null // 'ok' 但 H 缺席时兜底走 SVG，防白屏
   const upTo = upToIndex ?? trace.length - 1
   const dots = gnssPath ?? trace // 散点源（默认真值；给了 gnssPath 就是接收机实际报的流）
+  const gnssSampleIdx = useMemo(
+    () => thinByTimestamp(dots.map((p) => p.timestamp), 1.0, 200),
+    [dots],
+  )
+  const [selected, setSelected] = useState<{ type: MarkerType; index: number } | null>(null)
+  const interactiveRef = useRef(interactive)
+  interactiveRef.current = interactive
 
   // HERE 路径回放状态（随组件卸载/建图重建重置；App 换轨迹时先 setData(null) 卸载本组件）
   const mapRef = useRef<HereMap | null>(null)
@@ -122,6 +170,7 @@ export default function MapView({
   const sprayedMapRef = useRef<HereMap | null>(null) // 账本所属地图实例（stale-map 守卫）
   const carRef = useRef<HereMarker | null>(null)
   const iconCacheRef = useRef(new Map<number, unknown>())
+  const triangleIconCacheRef = useRef(new Map<string, unknown>())
 
   // 建图 + 匹配路径（全量）+ 视野适配。声明顺序保证本 effect 先于喷洒/车标 effect 运行。
   useEffect(() => {
@@ -140,24 +189,43 @@ export default function MapView({
     sprayedMapRef.current = null
     dotsRef.current = dots
     carRef.current = null
+    triangleIconCacheRef.current = new Map()
 
-    // DR 航位推算折线（紫）——先于匹配路径 addObject → 渲染于蓝线之下（HERE 对象按添加序叠放）。
-    // 3.1 Polyline style 无 dash 选项，纯色实线（与 SVG 兜地的虚线观感有别，可接受）
-    if (drPath && drPath.length > 1) {
+    // DR 航位推算：polyline 连续线 + 稀疏方向箭头。HERE SDK marker >500 会 culling，
+    // polyline 不受此限保证路径连续；箭头按等步长 ≤400 个做方向指示 + 点击弹窗。
+    if (drPath && drPath.length > 0) {
       const ls = new here.geo.LineString()
-      for (const p of drPath) ls.pushLatLngAlt(p[0], p[1])
+      for (const [lat, lng] of drPath) ls.pushPoint({ lat, lng })
       map.addObject(
-        new here.map.Polyline(ls, { style: { strokeColor: '#7c3aed', lineWidth: 2 } }),
+        new here.map.Polyline(ls, { style: { strokeColor: 'rgba(234,179,8,0.5)', lineWidth: 2 } }),
       )
+      const drStride = Math.max(1, Math.ceil(drPath.length / 400))
+      for (let i = 0; i < drPath.length; i += drStride) {
+        const hdg = trace[i] ? yawToCompassDeg(trace[i].headingDeg) : 0
+        const m = new here.map.Marker(
+          { lat: drPath[i][0], lng: drPath[i][1] },
+          { icon: markerIcon(here, triangleIconCacheRef.current, 'dr', hdg) },
+        )
+        m.addEventListener('tap', () => {
+          if (interactiveRef.current) setSelected({ type: 'dr', index: i })
+        })
+        map.addObject(m)
+      }
     }
 
-    // 匹配路径（蓝）——回放下仍全量显示：路网先知，车在路上走
-    if (derived.length > 1) {
-      const ls = new here.geo.LineString()
-      for (const d of derived) ls.pushLatLngAlt(d.matchedLatLng[0], d.matchedLatLng[1])
-      map.addObject(
-        new here.map.Polyline(ls, { style: { strokeColor: '#2563eb', lineWidth: 3 } }),
-      )
+    // 匹配路径点（蓝色三角，航向 = IMU yaw 透传）
+    if (derived.length > 0) {
+      for (const i of thinByTimestamp(trace.map((p) => p.timestamp), 1.0, 200)) {
+        const hdg = yawToCompassDeg(derived[i].headingDeg)
+        const m = new here.map.Marker(
+          { lat: derived[i].matchedLatLng[0], lng: derived[i].matchedLatLng[1] },
+          { icon: markerIcon(here, triangleIconCacheRef.current, 'mm', hdg) },
+        )
+        m.addEventListener('tap', () => {
+          if (interactiveRef.current) setSelected({ type: 'mm', index: i })
+        })
+        map.addObject(m)
+      }
     }
 
     // 视野适配：H.geo.Rect 构造参数顺序 = (top, left, bottom, right)，即 (north, west, south, east)。
@@ -187,6 +255,7 @@ export default function MapView({
       objRef.current = []
       sprayedMapRef.current = null
       carRef.current = null
+      triangleIconCacheRef.current = new Map()
     }
   }, [here, apikey, trace, derived, drPath])
 
@@ -212,7 +281,10 @@ export default function MapView({
       sprayedRef.current = []
       objRef.current = []
     }
-    const { removeIdx, addIdx } = sprayPlan(sprayedRef.current, Math.min(upTo, trace.length - 1), 2)
+    const upToClamped = Math.min(upTo, trace.length - 1)
+    const kept = new Set(sprayedRef.current.filter((i) => i <= upToClamped))
+    const removeIdx = sprayedRef.current.filter((i) => i > upToClamped)
+    const addIdx = gnssSampleIdx.filter((i) => i <= upToClamped && !kept.has(i))
     for (const i of removeIdx) {
       const k = sprayedRef.current.indexOf(i)
       const obj = objRef.current.splice(k, 1)[0]
@@ -223,14 +295,21 @@ export default function MapView({
       // noFix 帧记账不画（占位 null 保持与 sprayedRef 平行，撤销时靠上面的 null 守卫跳过）
       const obj = dots[i]?.noFix
         ? null
-        : new here.map.Circle({ lat: dots[i].lat, lng: dots[i].lng }, 3, {
-            style: { fillColor: 'rgba(245, 158, 11, 0.9)', strokeColor: '#f59e0b', lineWidth: 1 },
-          })
+        : (() => {
+            const m = new here.map.Marker(
+              { lat: dots[i].lat, lng: dots[i].lng },
+              { icon: markerIcon(here, triangleIconCacheRef.current, 'gnss', yawToCompassDeg(dots[i].headingDeg)) },
+            )
+            m.addEventListener('tap', () => {
+              if (interactiveRef.current) setSelected({ type: 'gnss', index: i })
+            })
+            return m
+          })()
       if (obj) map.addObject(obj)
       sprayedRef.current.push(i)
       objRef.current.push(obj)
     }
-  }, [here, upTo, trace, dots])
+  }, [here, upTo, trace, dots, gnssSampleIdx])
 
   // 车标：位置沿匹配路径垂足，航向烘焙进分桶图标。
   // volatility: true（评审 major 修正）：HERE 3.1 非易失对象的 setGeometry 走引擎 100ms debounce
@@ -284,9 +363,89 @@ export default function MapView({
           car={car}
           drPath={drPath}
           gnssPath={gnssPath}
+          interactive={interactive}
         />
       </div>
     )
   }
-  return <div ref={hostRef} style={{ width: '100%', height: '100%' }} />
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div ref={hostRef} style={{ width: '100%', height: '100%' }} />
+      <div
+        data-testid="map-legend"
+        style={{
+          position: 'absolute',
+          top: 12,
+          right: 12,
+          background: 'rgba(255,255,255,0.9)',
+          padding: '10px 14px',
+          borderRadius: 4,
+          border: '1px solid #d1d5db',
+          fontSize: 13,
+          pointerEvents: 'none',
+          lineHeight: '24px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <svg width="20" height="20" viewBox="0 0 20 20" style={{ marginRight: 8 }}>
+            <circle cx="10" cy="10" r="6" fill="none" stroke="#9ca3af" strokeWidth="2" />
+            <line x1="10" y1="10" x2="10" y2="3" stroke="#9ca3af" strokeWidth="1.5" />
+          </svg>
+          GNSS
+        </div>
+        {drPath && drPath.length > 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <svg width="20" height="20" viewBox="0 0 20 20" style={{ marginRight: 8 }}>
+              <polygon points="10,2 17,16 10,12 3,16" fill="#eab308" stroke="#a16207" strokeWidth="1" />
+            </svg>
+            DR
+          </div>
+        ) : null}
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <svg width="20" height="20" viewBox="0 0 20 20" style={{ marginRight: 8 }}>
+            <polygon points="10,2 17,16 10,12 3,16" fill="#2563eb" stroke="#1e40af" strokeWidth="1" />
+          </svg>
+          MM
+        </div>
+      </div>
+
+      {interactive && selected && (() => {
+        const popup = getMarkerPopup(selected.type, selected.index, trace, dots, drPath, derived)
+        if (!popup) return null
+        return (
+          <div
+            data-testid="marker-popup"
+            style={{
+              position: 'absolute',
+              top: 12,
+              left: 12,
+              background: 'rgba(255,255,255,0.94)',
+              border: '1px solid #d1d5db',
+              borderRadius: 4,
+              padding: '10px 14px',
+              fontSize: 13,
+              pointerEvents: 'auto',
+              zIndex: 10,
+              minWidth: 220,
+            }}
+          >
+            <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{popup.title}</div>
+            <div style={{ borderTop: '1px solid #e5e7eb', marginBottom: 6 }} />
+            {popup.lines.map(([label, value], j) => (
+              <div key={j} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, lineHeight: '20px' }}>
+                <span style={{ color: '#6b7280' }}>{label}</span>
+                <span>{value}</span>
+              </div>
+            ))}
+            <button
+              onClick={() => setSelected(null)}
+              style={{ position: 'absolute', top: 4, right: 8, border: 'none', background: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1, color: '#9ca3af' }}
+            >
+              ×
+            </button>
+          </div>
+        )
+      })()}
+    </div>
+  )
 }

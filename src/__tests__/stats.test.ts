@@ -10,6 +10,7 @@ function mkDs(deviations: number[]): DerivedPoint[] {
     deviationM,
     headingDeg: 90,
     speedMps: 1,
+    linkId: `s${i}`,
   }))
 }
 

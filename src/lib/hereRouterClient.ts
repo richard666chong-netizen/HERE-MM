@@ -1,9 +1,9 @@
 import type { ImportResponse, TrajPoint } from '../types'
 
-/** 降采样：≈500 点（末点补推时可达 501，远低于 API 50000 上限），首点天然保留、末点不在序列时追加；6 位小数（HERE polyline 精度） */
-export function buildImportRequest(trace: TrajPoint[]): Array<{ lat: number; lng: number }> {
+/** 降采样：≈500 点，首点天然保留、末点不在序列时追加；6 位小数 */
+export function buildImportRequest(trace: TrajPoint[]): { lat: number; lng: number }[] {
   const stride = Math.max(1, Math.ceil(trace.length / 500))
-  const out: Array<{ lat: number; lng: number }> = []
+  const out: { lat: number; lng: number }[] = []
   for (let i = 0; i < trace.length; i += stride) {
     out.push({ lat: round6(trace[i].lat), lng: round6(trace[i].lng) })
   }
@@ -16,16 +16,14 @@ function round6(v: number): number {
   return Math.round(v * 1e6) / 1e6
 }
 
-/** 结构校验：routes[0].sections 非空且每段 polyline 非空、summary 数值在 */
+/** 结构校验：routes[0].sections 非空且每段 polyline 非空 */
 function isValidImportResponse(r: unknown): r is ImportResponse {
-  const sections = (r as ImportResponse)?.routes?.[0]?.sections
-  if (!Array.isArray(sections) || sections.length === 0) return false
-  return sections.every(
-    (s) => typeof s?.polyline === 'string' && s.polyline.length > 0 && typeof s?.summary?.duration === 'number' && typeof s?.summary?.length === 'number',
-  )
+  const secs = (r as ImportResponse)?.routes?.[0]?.sections
+  if (!Array.isArray(secs) || secs.length === 0) return false
+  return secs.every((s) => typeof s?.id === 'string' && typeof s?.polyline === 'string' && s.polyline.length > 0)
 }
 
-/** HERE Routing v8 /import：POST trace → 匹配路线（flexible polyline）。失败抛错，由 matchService 落回 fixture。 */
+/** HERE Routing v8 /import：POST trace → 路由 sections（polyline + summary）。失败抛错，由 matchService 落回 fixture。 */
 export async function importRoute(apikey: string, trace: TrajPoint[]): Promise<ImportResponse> {
   const url = `https://router.hereapi.com/v8/import?return=polyline,summary&transportMode=car&apikey=${encodeURIComponent(apikey)}`
   const res = await fetch(url, {

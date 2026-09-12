@@ -49,3 +49,29 @@ export function nearestOnPolyline(p: LatLng, path: LatLng[]): { foot: LatLng; di
   }
   return best
 }
+
+/** 基于实际时间戳的抽稀：按 intervalS 秒间隔取首个到达/超过目标时刻的点。
+ *  轨迹总时长不足 intervalS 时退化为 Math.ceil(n/maxPoints) 的等间隔 stride，
+ *  保证小数据集仍有多点。始终保留首尾点。 */
+export function thinByTimestamp(timestamps: number[], intervalS: number, maxPoints = 200): number[] {
+  if (timestamps.length === 0) return []
+  const out: number[] = [0]
+  const t0 = timestamps[0]
+  const totalS = timestamps[timestamps.length - 1] - t0
+  if (totalS <= 0) {
+    const stride = Math.max(1, Math.ceil(timestamps.length / maxPoints))
+    for (let i = stride; i < timestamps.length; i += stride) out.push(i)
+    if (out[out.length - 1] !== timestamps.length - 1) out.push(timestamps.length - 1)
+    return out
+  }
+  const stride = Math.max(intervalS, totalS / maxPoints)
+  let nextTarget = t0 + stride
+  for (let i = 1; i < timestamps.length; i++) {
+    if (timestamps[i] >= nextTarget - 1e-9) {
+      out.push(i)
+      nextTarget += stride
+    }
+  }
+  if (out[out.length - 1] !== timestamps.length - 1) out.push(timestamps.length - 1)
+  return out
+}

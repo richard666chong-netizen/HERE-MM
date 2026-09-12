@@ -1,4 +1,4 @@
-/** KITTI 轨迹点（trajectory_light.json 元素，契约测试见 trajectories.test.ts） */
+/** KITTI 轨迹点（lat/lng/heading/speed/timestamp + GNSS 质量） */
 export interface TrajPoint {
   lat: number
   lng: number
@@ -7,10 +7,7 @@ export interface TrajPoint {
   headingDeg: number
   speedMps: number
   numsats: number
-  /** KITTI oxts posmode：0 = 接收机无定位解（失锁硬判据）。0011/0033/0093 的既有样本无此列。 */
   posmode?: number
-  /** 该帧接收机无定位解（真实 posmode==0 或仿真隧道窗口内）——由 buildGnssFeed 标记。
-   *  渲染层据此不画 GNSS 散点；deadReckon 据此跳过 1Hz 更新。 */
   noFix?: boolean
 }
 
@@ -27,13 +24,15 @@ export interface ImportResponse {
   notices?: unknown[]
 }
 
-/** 派生：每轨迹点 → 匹配路径上的垂足与横向偏差（import API 无逐点 linkId/confidence） */
+/** 派生：每轨迹点 → 匹配路径上的垂足与横向偏差 */
 export interface DerivedPoint {
   i: number
   matchedLatLng: [number, number]
   deviationM: number
   headingDeg: number
   speedMps: number
+  /** 该点投影所在 section 的 id（import API 返回的 route section id） */
+  linkId: string
 }
 
 /** localStorage 与 fixture 共用 schema；key = `here-mm-cache:{driveId}` */

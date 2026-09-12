@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildGnssFeed, TUNNEL_START_FRACTION } from '../lib/gnssFeed'
 import type { TrajPoint } from '../types'
 
-/** posmode === 0 表示接收机无定位解；缺省字段 = 未带该列的旧数据（0011/0033/0093） */
+/** posmode === 0 表示接收机无定位解；缺省字段 = 未带该列的旧数据（0093） */
 const pt = (lat: number, posmode: number | undefined, extra: Partial<TrajPoint> = {}): TrajPoint => ({
   lat,
   lng: 8.4,
@@ -28,7 +28,7 @@ describe('buildGnssFeed（退化 GNSS 流）', () => {
     expect(feed.every((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))).toBe(true)
   })
 
-  it('G3 无 posmode 列的旧数据原样返回（0011/0033/0093 零回归）', () => {
+  it('G3 无 posmode 列的旧数据原样返回（0093 零回归）', () => {
     const trace = [pt(1, undefined), pt(2, undefined), pt(3, undefined)]
     expect(buildGnssFeed(trace)).toBe(trace)
   })
@@ -95,7 +95,7 @@ describe('buildGnssFeed（退化 GNSS 流）', () => {
     expect(realFeed[5].noFix).toBe(true)
     expect(realFeed.filter((p) => p.noFix).length).toBe(1)
 
-    // 0011/0033/0093 无 posmode 列且隧道关闭 → 原引用（零回归的硬保证）
+    // 0093 无 posmode 列且隧道关闭 → 原引用（零回归的硬保证）
     const legacy = line(20, undefined)
     expect(buildGnssFeed(legacy)).toBe(legacy)
   })

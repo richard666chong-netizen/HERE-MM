@@ -15,7 +15,7 @@ function tp(t: number): TrajPoint {
   }
 }
 function dp(i: number, dev: number): DerivedPoint {
-  return { i, matchedLatLng: [49, 8.4], deviationM: dev, headingDeg: 0, speedMps: 5 }
+  return { i, matchedLatLng: [49, 8.4], deviationM: dev, headingDeg: 0, speedMps: 5, linkId: `s${i}` }
 }
 
 describe('DeviationReplayChart', () => {
@@ -53,7 +53,7 @@ describe('DeviationReplayChart', () => {
     expect(container.textContent).toContain('暂无偏差数据')
   })
 
-  it('locks adaptive window for short traces (0011-like: total 23.2s → win ≈ 11.6s)', () => {
+  it('locks adaptive window for short traces (total < 30s → win ≈ half)', () => {
     const trace = Array.from({ length: 233 }, (_, i) => tp(i * 0.1)) // 0..23.2s
     const derived = trace.map((_, i) => dp(i, 1))
     const { container } = render(

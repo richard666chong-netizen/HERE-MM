@@ -11,17 +11,17 @@ import f0093 from '../../public/fixtures/2011_09_26_drive_0093.json'
 // mapStatus='ok' 路径不在本层测：HERE SDK 需真实浏览器环境（jsdom 不加载外部脚本），
 // 由 T8 Step 5 真实 key 手动验收覆盖（计划 Task 7 Step 1 注明）。
 
-function tp(lat: number, lng: number, headingDeg = 0): TrajPoint {
-  return { lat, lng, timestamp: 0, timestampUtc: '2026-09-07T00:00:00Z', headingDeg, speedMps: 0, numsats: 6 }
+function tp(lat: number, lng: number, headingDeg = 0, timestamp = 0): TrajPoint {
+  return { lat, lng, timestamp, timestampUtc: '2026-09-07T00:00:00Z', headingDeg, speedMps: 0, numsats: 6 }
 }
 
 function dp(i: number, lat: number, lng: number): DerivedPoint {
-  return { i, matchedLatLng: [lat, lng], deviationM: 0, headingDeg: 0, speedMps: 0 }
+  return { i, matchedLatLng: [lat, lng], deviationM: 0, headingDeg: 0, speedMps: 0, linkId: `s${i}` }
 }
 
 describe('MapView fallback（SvgFallback）路径', () => {
-  it("mapStatus='fallback'：svg 存在、matched-path 非空、gnss-dot=3（不触发抽稀）、endpoint-marker=2", () => {
-    const trace = [tp(49.0, 8.4), tp(49.01, 8.405), tp(49.02, 8.41)]
+  it("mapStatus='fallback'：svg 存在、matched-path 非空、gnss-dot=2（1Hz 抽稀）、endpoint-marker=2", () => {
+    const trace = [tp(49.0, 8.4, 0, 0), tp(49.01, 8.405, 0, 0.1), tp(49.02, 8.41, 0, 0.2)]
     const derived = [dp(0, 49.0, 8.4), dp(1, 49.01, 8.405), dp(2, 49.02, 8.41)]
     const { container } = render(<MapView trace={trace} derived={derived} mapStatus="fallback" apikey="" />)
 
@@ -29,15 +29,15 @@ describe('MapView fallback（SvgFallback）路径', () => {
 
     const path = container.querySelector('[data-testid="matched-path"]')
     expect(path).toBeTruthy()
-    expect(path?.getAttribute('points')).toMatch(/\S/) // 非空折线
+    expect(path?.children.length).toBeGreaterThan(0) // 非空
 
-    expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(3) // 3 点不触发抽稀
+    expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(2) // 1Hz 抽稀：下标 0、2
     expect(container.querySelectorAll('[data-testid="endpoint-marker"]').length).toBe(2)
   })
 
   it('viewBox 宽高比符合等距圆柱投影（x 乘 cos(midLat)），±5%', () => {
     // 已知 bbox 的 2 点 trace：Δlat = 0.1、Δlng = 0.01、midLat = 49.05°
-    const trace = [tp(49.0, 8.4), tp(49.1, 8.41)]
+    const trace = [tp(49.0, 8.4, 0, 0), tp(49.1, 8.41, 0, 0.1)]
     const { container } = render(<MapView trace={trace} derived={[]} mapStatus="fallback" apikey="" />)
 
     const viewBox = container.querySelector('svg')?.getAttribute('viewBox')
@@ -54,16 +54,16 @@ describe('MapView fallback（SvgFallback）路径', () => {
 })
 
 describe('MapView replay（SvgFallback 路径）', () => {
-  const trace = [tp(49.0, 8.4, 0), tp(49.01, 8.405, 90), tp(49.02, 8.41, 180)]
+  const trace = [tp(49.0, 8.4, 0, 0), tp(49.01, 8.405, 90, 0.1), tp(49.02, 8.41, 180, 0.2)]
   // derived 与 trace 坐标故意错开（评审修正，防假绿）：车标必须取 matchedLatLng（匹配路线）
   // 而非 GNSS 原始点——测试数据重合时两种实现都过，错开后可判别
   const derived = [dp(0, 49.001, 8.401), dp(1, 49.015, 8.406), dp(2, 49.019, 8.409)]
 
-  it('upToIndex limits spray to 2 dots + start marker only; car renders with heading rotation', () => {
+  it('upToIndex limits spray to 1 dot + start marker only; car renders with heading rotation', () => {
     const { container } = render(
       <MapView trace={trace} derived={derived} mapStatus="fallback" apikey="" upToIndex={1} carIndex={1} />,
     )
-    expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(2) // 下标 0、1
+    expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(1) // 1Hz 抽稀：下标 0
     expect(container.querySelectorAll('[data-testid="endpoint-marker"]').length).toBe(1) // 仅起点，终点未到
     const car = container.querySelector('[data-testid="car-marker"]')
     expect(car).toBeTruthy()
@@ -71,16 +71,18 @@ describe('MapView replay（SvgFallback 路径）', () => {
     expect(car!.getAttribute('transform')).toMatch(/rotate\(0/) // IMU yaw 90°=正北 → 罗盘 0°
     // 车标位置 = 匹配路线垂足 ≠ GNSS 原始点（gnss-dot 即 trace 位置的现成探针）
     const m = car!.getAttribute('transform')!.match(/translate\(([-\d.]+) ([-\d.]+)\)/)!
-    const dot1 = container.querySelectorAll('[data-testid="gnss-dot"]')[1]
-    expect(Number(m[1])).not.toBeCloseTo(Number(dot1.getAttribute('cx')), 1)
-    expect(Number(m[2])).not.toBeCloseTo(Number(dot1.getAttribute('cy')), 1)
+    const dot0 = container.querySelectorAll('[data-testid="gnss-dot"]')[0] as SVGElement
+    const dx = Number(dot0.querySelector('circle')!.getAttribute('cx'))
+    const dy = Number(dot0.querySelector('circle')!.getAttribute('cy'))
+    expect(Number(m[1])).not.toBeCloseTo(dx, 1)
+    expect(Number(m[2])).not.toBeCloseTo(dy, 1)
   })
 
   it('upToIndex = last restores full static render; no car marker without carIndex', () => {
     const { container } = render(
       <MapView trace={trace} derived={derived} mapStatus="fallback" apikey="" upToIndex={2} />,
     )
-    expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(3)
+    expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(2) // 1Hz 抽稀：下标 0、2
     expect(container.querySelectorAll('[data-testid="endpoint-marker"]').length).toBe(2) // 终点出现
     expect(container.querySelector('[data-testid="car-marker"]')).toBeNull()
   })
@@ -89,7 +91,7 @@ describe('MapView replay（SvgFallback 路径）', () => {
 // Step4 任务3：DR 图层。drPath 缺省 = 不渲染（既有轨迹零改动）；存在 = 紫虚线渲染于
 // 匹配路线（蓝）之下、GNSS 散点之上，且画幅（viewBox / HERE bounds）纳入 DR 点防裁剪。
 describe('MapView DR 图层（SvgFallback 路径）', () => {
-  const trace3 = [tp(49.0, 8.4), tp(49.01, 8.405), tp(49.02, 8.41)]
+  const trace3 = [tp(49.0, 8.4, 0, 0), tp(49.01, 8.405, 0, 0.1), tp(49.02, 8.41, 0, 0.2)]
   const derived3 = [dp(0, 49.0, 8.4), dp(1, 49.01, 8.405), dp(2, 49.02, 8.41)]
   const drPath: Array<[number, number]> = [
     [49.0, 8.4],
@@ -103,17 +105,15 @@ describe('MapView DR 图层（SvgFallback 路径）', () => {
     )
     const dr = container.querySelector('[data-testid="dr-path"]')
     expect(dr).toBeTruthy()
-    expect(dr?.getAttribute('points')).toMatch(/\S/) // 非空折线
-    expect(dr?.getAttribute('stroke')).toBe('#7c3aed') // 紫
-    expect(dr?.getAttribute('stroke-dasharray')).toBe('6 3') // 虚线（与匹配路线区分）
-    expect(dr?.getAttribute('stroke-width')).toBe('1.5')
+    expect(dr?.children.length).toBeGreaterThan(0) // 非空
+    expect(dr?.querySelector('polygon')?.getAttribute('fill')).toBe('#eab308') // 黄色箭头
     // z 序 = 文档序（后者盖上者）：首散点 < dr-path < matched-path
     const idx = (sel: string) =>
       Array.from(container.querySelector('svg')!.children).indexOf(container.querySelector(sel)!)
     expect(idx('[data-testid="dr-path"]')).toBeGreaterThan(idx('[data-testid="gnss-dot"]'))
     expect(idx('[data-testid="dr-path"]')).toBeLessThan(idx('[data-testid="matched-path"]'))
 
-    // 不传 drPath → 无 DR 层（0011/0033 零改动）
+    // 不传 drPath → 无 DR 层
     const { container: c2 } = render(
       <MapView trace={trace3} derived={derived3} mapStatus="fallback" apikey="" />,
     )
@@ -122,11 +122,11 @@ describe('MapView DR 图层（SvgFallback 路径）', () => {
 
   it('多 section 拼接烟囱：0093 两段不相邻 polyline → derive 不抛错、matched-path 非空、gnss-dot 在场', () => {
     // 0093 是 importSplitRoute 拆分路由（4 段），取空间不相邻的段 0 与段 2 合成 response
-    const secs = f0093.response.routes[0].sections
+    const secs = (f0093 as unknown as { response: { routes: { sections: { id: string; polyline: string; summary: { duration: number; length: number } }[] }[] } }).response.routes[0].sections
     const response: ImportResponse = {
-      routes: [{ id: 'synthetic-2sec', sections: [secs[0], secs[2]] }],
+      routes: [{ id: 'synthetic-2sec', sections: [{ id: secs[0].id, type: 'vehicle', polyline: secs[0].polyline, summary: secs[0].summary }, { id: secs[2].id, type: 'vehicle', polyline: secs[2].polyline, summary: secs[2].summary }] }],
     }
-    const trace = [tp(48.99779, 8.46905), tp(48.99807, 8.4701), tp(48.99837, 8.47056)]
+    const trace = [tp(48.99779, 8.46905, 0, 0), tp(48.99807, 8.4701, 0, 0.1), tp(48.99837, 8.47056, 0, 0.2)]
     let derived: DerivedPoint[] = []
     expect(() => {
       derived = derive(trace, response)
@@ -136,14 +136,14 @@ describe('MapView DR 图层（SvgFallback 路径）', () => {
       <MapView trace={trace} derived={derived} mapStatus="fallback" apikey="" />,
     )
     const path = container.querySelector('[data-testid="matched-path"]')
-    expect(path?.getAttribute('points')).toMatch(/\S/)
-    expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(3)
+    expect(path?.children.length).toBeGreaterThan(0)
+    expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(2) // 1Hz 抽稀
   })
 
   it('画幅纳入 drPath：DR 点北向 +0.01° 出 trace bbox → viewBox 高度按投影量增长（±10%）', () => {
     // 宽度主导归一化（东西 0.025°≈1.8km > 增长后 vbH≈1.48km），两次渲染 unitsPerMeter 恒定，
     // 高度增量可换算回米；trace 南北仅 0.001°≈111m，+0.01°≈1113m 的 DR 位移远超 5% 边距效应
-    const trace = [tp(49.0, 8.4), tp(49.001, 8.425)]
+    const trace = [tp(49.0, 8.4, 0, 0), tp(49.001, 8.425, 0, 0.1)]
     const vb = (path?: Array<[number, number]>) => {
       const { container } = render(
         <MapView trace={trace} derived={[]} mapStatus="fallback" apikey="" drPath={path} />,
@@ -170,7 +170,7 @@ describe('MapView DR 图层（SvgFallback 路径）', () => {
 // Step6：散点口径从「原始 OXTS」改为「接收机实际报的 GNSS」——失锁帧不画点，
 // 隧道/城市峡谷/树荫时期的退化才看得见（此前散点画真值，退化被抹平）。
 describe('MapView 散点口径（gnssPath）', () => {
-  const trace = [tp(49.0, 8.4), tp(49.01, 8.405), tp(49.02, 8.41)]
+  const trace = [tp(49.0, 8.4, 0, 0), tp(49.01, 8.405, 0, 0.1), tp(49.02, 8.41, 0, 0.2)]
   const derived = [dp(0, 49.0, 8.4), dp(1, 49.01, 8.405), dp(2, 49.02, 8.41)]
 
   it('gnssPath 中 noFix 帧不产出 gnss-dot，其余图层不受影响', () => {

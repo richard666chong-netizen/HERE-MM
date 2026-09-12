@@ -24,7 +24,7 @@ export interface GnssFeedOptions {
  *  - 失锁帧：`lat/lng` 冻结为失锁前最后一帧有效定位，并置 `noFix: true`（渲染层据此不画散点）
  *  - 帧 0 无条件播种（与 deadReckon 的初始化规则一致）
  *  - 只改 lat/lng + noFix：headingDeg/speedMps/numsats 逐帧透传——失锁期的速度源就在这里
- *  - 无 posmode 列且隧道关闭（0011/0033/0093）→ 原引用返回，零回归
+ *  - 无 posmode 列且隧道关闭（0093）→ 原引用返回，零回归
  */
 export function buildGnssFeed(trace: TrajPoint[], opts?: GnssFeedOptions): TrajPoint[] {
   if (trace.length === 0) return trace

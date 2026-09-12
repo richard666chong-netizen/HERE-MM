@@ -13,10 +13,8 @@ import { cacheKey, matchService, readCache, writeCache } from './lib/fixtureStor
 import { loadHereMaps, probeBasemap } from './lib/hereLoader'
 import type { CacheEntry, DerivedPoint, TrajPoint } from './types'
 
-// 顶栏下拉顺序：对照组 0033/0011 → 退化 0093（真值不可信）→ 退化 0096/0106（真值可信，posmode 失锁）
+// 顶栏下拉顺序：退化 0093（真值不可信）→ 退化 0096/0106（真值可信，posmode 失锁）→ 0042（仿真隧道宿主）
 const DRIVE_IDS = [
-  '2011_09_30_drive_0033',
-  '2011_09_26_drive_0011',
   '2011_09_26_drive_0093',
   '2011_09_26_drive_0096',
   '2011_09_26_drive_0106',
@@ -59,7 +57,7 @@ export default function App() {
   const [mapStatus, setMapStatus] = useState<MapStatus>(apikey ? 'pending' : 'fallback')
   const [mode, setMode] = useState<Mode>('analysis')
 
-  // DR 航位推算（Step4）：门控阈值 4（≤4 星 = 失锁叙事；阈值 6 会误伤 0033 的 5 星段），
+  // 门控阈值 4（≤4 星 = 失锁叙事）
   // 轨迹含失锁点才递推，否则 null → drPath 缺省不渲染。仅随 data 重算，不进回放逐帧路径。
   // Step5：递推的输入是 buildGnssFeed 的退化 GNSS 流（失锁期冻在最后一帧有效定位）——
   // OXTS 在失锁期是 INS 桥接解 ≈ 真值，直接喂 DR 只会复读真值（无 posmode 的旧数据原样返回）。
@@ -121,7 +119,7 @@ export default function App() {
         if (!traceRes.ok) throw new Error(`trace load failed: ${driveId}`)
         const trace = (await traceRes.json()) as TrajPoint[]
         // DR 增强（Step4 T4）：门控阈值 4——轨迹含失锁点时，live 请求的 trace 用 DR 位置
-        // 替换 lat/lng（其余字段透传）。0011/0033 的 ≤4 星点为 0 → 零变化。
+        // 替换 lat/lng（其余字段透传）。0093 的 ≤4 星点 → DR 增强。
         // Step5：递推输入为 buildGnssFeed 的退化流（posmode==0 期冻结；无该列的旧数据原样）。
         // 缓存/fixture 路径不增强（离线即所录即所得）。
         const gnssFeed = buildGnssFeed(trace, { tunnelDurationS: tunnelS || undefined })
@@ -304,11 +302,11 @@ export default function App() {
               derived={data.derived}
               mapStatus={mapStatus === 'ok' ? 'ok' : 'fallback'}
               apikey={apikey}
-              /* 分析模式传全量下标 → 同一喷洒路径一次洒满，HERE 地图实例跨 tab 复用不重建 */
               upToIndex={mode === 'demo' ? pb.index : data.trace.length - 1}
               carIndex={mode === 'demo' ? pb.index : undefined}
               drPath={dr?.positions}
               gnssPath={data.gnssFeed}
+              interactive={mode === 'analysis'}
             />
           ) : null}
         </section>

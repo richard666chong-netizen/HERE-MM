@@ -11,13 +11,9 @@ import { deviationStats } from '../lib/stats'
 import type { CacheEntry, TrajPoint } from '../types'
 
 // 测试代码豁免静态 import public/（src 运行时路径禁止，见计划 Global Constraints）
-import trace0011 from '../../public/sample/here/2011_09_26_drive_0011.json'
-import trace0033 from '../../public/sample/here/2011_09_30_drive_0033.json'
 import trace0093 from '../../public/sample/here/2011_09_26_drive_0093.json'
 import trace0096 from '../../public/sample/here/2011_09_26_drive_0096.json'
 import trace0042 from '../../public/sample/here/2011_10_03_drive_0042.json'
-import fixture0011 from '../../public/fixtures/2011_09_26_drive_0011.json'
-import fixture0033 from '../../public/fixtures/2011_09_30_drive_0033.json'
 import fixture0093 from '../../public/fixtures/2011_09_26_drive_0093.json'
 
 // 有 key 时 App 会调 loader + 底图探测：mock 掉防 script 注入/8s 超时（hoisted，空 key 用例本就不被调，零影响）。
@@ -29,15 +25,11 @@ vi.mock('../lib/hereLoader', () => ({
 const probeMock = vi.mocked(probeBasemap)
 
 const TRACES: Record<string, unknown> = {
-  '2011_09_26_drive_0011': trace0011,
-  '2011_09_30_drive_0033': trace0033,
   '2011_09_26_drive_0093': trace0093,
   '2011_09_26_drive_0096': trace0096,
   '2011_10_03_drive_0042': trace0042,
 }
 const FIXTURES: Record<string, unknown> = {
-  '2011_09_26_drive_0011': fixture0011,
-  '2011_09_30_drive_0033': fixture0033,
   '2011_09_26_drive_0093': fixture0093,
 }
 
@@ -71,13 +63,13 @@ describe('App (Step1 编排壳)', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders header: POC title + drive selector with 0033/0011', async () => {
+  it('renders header: POC title + drive selector with 0093/0096', async () => {
     render(<App />)
     expect(screen.getByRole('heading', { name: 'HERE Map Matching POC' })).toBeTruthy()
     const select = screen.getByRole('combobox', { name: '轨迹' }) as HTMLSelectElement
-    expect(select.value).toBe('2011_09_30_drive_0033') // 默认选中 0033
-    expect(screen.getByRole('option', { name: /0033/ })).toBeTruthy()
-    expect(screen.getByRole('option', { name: /0011/ })).toBeTruthy()
+    expect(select.value).toBe('2011_09_26_drive_0093') // 默认选中 0093
+    expect(screen.getByRole('option', { name: /0093/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /0096/ })).toBeTruthy()
     // 等待异步取数完成，让挂起的状态更新落在 act 内（防 update-not-wrapped-in-act 噪声）
     await screen.findByText('MOCK')
   })
@@ -87,8 +79,8 @@ describe('App (Step1 编排壳)', () => {
     expect(await screen.findByText('MOCK')).toBeTruthy() // 异步取数完成后角标亮
 
     // StatsPanel 汇总数字 = 同一份数据经 derive/deviationStats 的精确期望值（接线正确性）
-    const trace = trace0033 as unknown as TrajPoint[]
-    const entry = fixture0033 as unknown as CacheEntry
+    const trace = trace0093 as unknown as TrajPoint[]
+    const entry = fixture0093 as unknown as CacheEntry
     const stats = deviationStats(derive(trace, entry.response))
     const chips: ReadonlyArray<readonly [string, number]> = [
       ['均值', stats.meanM],
@@ -108,7 +100,7 @@ describe('App (Step1 编排壳)', () => {
   it('clear-cache button removes the here-mm-cache key for current drive', async () => {
     render(<App />)
     await screen.findByText('MOCK')
-    const driveId = '2011_09_30_drive_0033'
+    const driveId = '2011_09_26_drive_0093'
     expect(localStorage.getItem(cacheKey(driveId))).not.toBeNull() // 未缓存加载后已回填
 
     fireEvent.click(screen.getByRole('button', { name: '清除缓存' }))
@@ -133,9 +125,9 @@ describe('App (Step1 编排壳)', () => {
     fireEvent.click(screen.getByRole('tab', { name: '客户演示模式' }))
     expect(screen.getByRole('tab', { name: '客户演示模式' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.queryByText('偏差分布直方图')).toBeNull() // 侧栏换成回放曲线
-    const trace = trace0033 as unknown as TrajPoint[]
+    const trace = trace0093 as unknown as TrajPoint[]
     const slider = screen.getByRole('slider') as HTMLInputElement
-    expect(Number(slider.max)).toBe(trace.length - 1) // 1593
+    expect(Number(slider.max)).toBe(trace.length - 1) // 432
     const totalSec = trace[trace.length - 1].timestamp
     expect(screen.getByTestId('replay-time').textContent).toContain(`${totalSec.toFixed(1)}s`)
     expect(screen.getByTestId('replay-deviation').textContent).toContain('m')
@@ -173,11 +165,7 @@ describe('App (Step1 编排壳)', () => {
 
   it('with key: live path lights LIVE badge; record button clears cache and reloads', async () => {
     vi.stubEnv('VITE_HERE_KEY', 'test-key')
-    const liveResponse = {
-      routes: [
-        { id: 'r', sections: [{ id: 's', type: 'vehicle', polyline: (fixture0033 as unknown as CacheEntry).response.routes[0].sections[0].polyline, summary: { duration: 1740, length: 1740 } }] },
-      ],
-    }
+    const liveResponse = (fixture0093 as unknown as CacheEntry).response
     const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
       const url = String(input)
       if (url.startsWith('https://router.hereapi.com/v8/import')) {
@@ -193,15 +181,15 @@ describe('App (Step1 编排壳)', () => {
 
     render(<App />)
     expect(await screen.findByText('LIVE')).toBeTruthy() // live 调用成功 → 角标 LIVE
-    const stored = JSON.parse(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))!)
+    const stored = JSON.parse(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))!)
     expect(stored.source).toBe('live')
 
     // 录制按钮：清当前缓存 → 重载（再次 live）
     fireEvent.click(screen.getByRole('button', { name: '录制' }))
-    expect(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))).toBeNull() // 重载完成前键已消失
+    expect(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))).toBeNull() // 重载完成前键已消失
     expect(await screen.findByText('LIVE')).toBeTruthy() // 重载后复亮
     // 重载确实发生（评审修正，防「只删缓存不重载」假绿）：键经 live 回填恢复 + live 端点共调 2 次
-    expect(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))).not.toBeNull()
+    expect(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))).not.toBeNull()
     const liveCalls = fetchMock.mock.calls.filter(([u]) => String(u).startsWith('https://router.hereapi.com/v8/import')).length
     expect(liveCalls).toBe(2)
   })
@@ -235,7 +223,7 @@ describe('App (Step1 编排壳)', () => {
     )
     render(<App />)
     expect(await screen.findByText(/加载失败/)).toBeTruthy() // derive 对坏 polyline 抛错
-    expect(localStorage.getItem(cacheKey('2011_09_30_drive_0033'))).toBeNull() // live entry 已被驱逐
+    expect(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))).toBeNull() // live entry 已被驱逐
   })
 
   // Step4 T4：DR 增强 live 匹配。0093 含失锁点 → live 请求 trace 用 DR 位置替换 lat/lng；
@@ -263,17 +251,13 @@ describe('App (Step1 编排壳)', () => {
     )
 
     render(<App />)
-    // 选 0093（下拉第三项）
-    fireEvent.change(screen.getByRole('combobox', { name: '轨迹' }), { target: { value: '2011_09_26_drive_0093' } })
     await screen.findByText('LIVE')
 
-    // 期望 body.trace = buildImportRequest(drAugmented)（DR 位置替换 lat/lng，同进程同变换含 round6）
     const drPositions = deadReckon(t0093).positions
     const drAugmented = t0093.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] }))
     const expectedBody = buildImportRequest(drAugmented)
     const actualBody = JSON.parse(capturedBody!).trace
     expect(actualBody).toEqual(expectedBody)
-    // 反断言：body ≠ buildImportRequest(原始 trace)——「忘了增强」的真证伪点
     const originalBody = buildImportRequest(t0093)
     expect(actualBody).not.toEqual(originalBody)
   })
@@ -283,7 +267,7 @@ describe('App (Step1 编排壳)', () => {
   it('0096 live: DR-augmented trace from frozen GNSS feed (≠ 用原始 OXTS 递推的 body)', async () => {
     vi.stubEnv('VITE_HERE_KEY', 'test-key')
     const t0096 = trace0096 as unknown as TrajPoint[]
-    const liveResponse = (fixture0093 as unknown as CacheEntry).response // 桩只需合法响应形状，断言在请求体
+    const liveResponse = (fixture0093 as unknown as CacheEntry).response
     let capturedBody: string | null = null
     vi.stubGlobal(
       'fetch',
@@ -311,7 +295,6 @@ describe('App (Step1 编排壳)', () => {
     )
     const actualBody = JSON.parse(capturedBody!).trace
     expect(actualBody).toEqual(expectedBody)
-    // 反断言：≠ 用原始 OXTS 递推的 body——「忘了接 gnssFeed」的真证伪点
     const rawPositions = deadReckon(t0096).positions
     const rawBody = buildImportRequest(
       t0096.map((p, i) => ({ ...p, lat: rawPositions[i][0], lng: rawPositions[i][1] })),
@@ -328,14 +311,15 @@ describe('App (Step1 编排壳)', () => {
     await screen.findByText('MOCK')
     expect(probeMock).toHaveBeenCalledWith('test-key')
     expect(screen.getByTestId('matched-path')).toBeTruthy() // 兜底路径渲染中，不是空白
+    expect(screen.getByTestId('matched-path')?.children.length).toBeGreaterThan(0)
     expect(screen.getAllByTestId('gnss-dot').length).toBeGreaterThan(0) // 散点逐点一个 testid
   })
 
-  it('0033 live: zero DR augmentation (no outages at threshold 4 → trace unchanged)', async () => {
+  it('0093 live (无隧道): DR-augmented trace sent to HERE API (body ≠ original trace)', async () => {
     vi.stubEnv('VITE_HERE_KEY', 'test-key')
-    const t0033 = trace0033 as unknown as TrajPoint[]
-    const f0033 = fixture0033 as unknown as CacheEntry
-    const liveResponse = f0033.response
+    const t0093 = trace0093 as unknown as TrajPoint[]
+    const f0093 = fixture0093 as unknown as CacheEntry
+    const liveResponse = f0093.response
     let capturedBody: string | null = null
     vi.stubGlobal(
       'fetch',
@@ -356,11 +340,13 @@ describe('App (Step1 编排壳)', () => {
     render(<App />)
     await screen.findByText('LIVE')
 
-    // 0033 在门控阈值 4 下 ≤4 星点为 0 → live 请求零变化
-    expect(detectOutages(t0033, 4).some(Boolean)).toBe(false) // 前置验证
+    expect(detectOutages(t0093, 4).some(Boolean)).toBe(true)
+    const drPositions = deadReckon(t0093).positions
+    const expectedBody = buildImportRequest(
+      t0093.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] })),
+    )
     const actualBody = JSON.parse(capturedBody!).trace
-    const expectedBody = buildImportRequest(t0033)
-    expect(actualBody).toEqual(expectedBody) // 原始 trace 直送，无 DR 增强
+    expect(actualBody).toEqual(expectedBody)
   })
 
   // Step6 仿真隧道：旋钮改变 live 请求的 trace（DR 的输入是隧道流）。
@@ -392,22 +378,22 @@ describe('App (Step1 编排壳)', () => {
     })
     await screen.findByText('LIVE')
     fireEvent.change(screen.getByRole('combobox', { name: '隧道' }), { target: { value: '60' } })
-    // 三次请求：初始 0033 → 换 0042（隧道仍关）→ 开隧道 60s（缓存按隧道时长分档 → 必然重取数）
+    // 三次请求：初始 0093 → 换 0042（隧道仍关）→ 开隧道 60s（缓存按隧道时长分档 → 必然重取数）
     await waitFor(() => expect(bodies.length).toBe(3))
 
     const feed = buildGnssFeed(t, { tunnelDurationS: 60 })
     const dr = deadReckon(feed).positions
     const expected = buildImportRequest(feed.map((p, i) => ({ ...p, lat: dr[i][0], lng: dr[i][1] })))
     expect(JSON.parse(bodies[2]).trace).toEqual(expected)
-    // 反断言：隧道开启后的请求体 ≠ 同一轨迹隧道关闭时的请求体——「旋钮没接线」的真证伪点
     expect(JSON.parse(bodies[2]).trace).not.toEqual(JSON.parse(bodies[1]).trace)
   })
 
-  it('0033 live + 隧道 60s：隧道是场景参数，对照轨迹也会被套上（≠ 隧道关闭时的请求体）', async () => {
+  it('0093 live + 隧道 60s：隧道是场景参数，也会被套上（≠ 隧道关闭时的请求体）', async () => {
     vi.stubEnv('VITE_HERE_KEY', 'test-key')
-    const t = trace0033 as unknown as TrajPoint[]
+    const t = trace0093 as unknown as TrajPoint[]
     let count = 0
     let capturedBody = ''
+    const liveResp = (fixture0093 as unknown as CacheEntry).response
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -418,7 +404,7 @@ describe('App (Step1 编排壳)', () => {
           return {
             ok: true,
             status: 200,
-            json: async () => (fixture0033 as unknown as CacheEntry).response,
+            json: async () => liveResp,
           } as Response
         }
         const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
@@ -432,18 +418,18 @@ describe('App (Step1 编排壳)', () => {
     render(<App />)
     await screen.findByText('LIVE')
     fireEvent.change(screen.getByRole('combobox', { name: '隧道' }), { target: { value: '60' } })
-    await waitFor(() => expect(count).toBe(2)) // 初始 0033 + 开隧道后重取数
-    // 0033 无 posmode 列，但隧道窗口照样生效（场景参数作用于当前轨迹，不挑宿主）
+    await waitFor(() => expect(count).toBe(2))
     const feed = buildGnssFeed(t, { tunnelDurationS: 60 })
     const dr = deadReckon(feed).positions
     const expected = buildImportRequest(feed.map((p, i) => ({ ...p, lat: dr[i][0], lng: dr[i][1] })))
     expect(JSON.parse(capturedBody).trace).toEqual(expected)
-    expect(JSON.parse(capturedBody).trace).not.toEqual(buildImportRequest(t)) // 确实变了
+    expect(JSON.parse(capturedBody).trace).not.toEqual(buildImportRequest(t))
   })
 
   it('统计面板 DR 漂移读数：0042 + 隧道 60s → max|DR − 真值| = 66.86m', async () => {
     vi.stubEnv('VITE_HERE_KEY', 'test-key')
     let count = 0
+    const liveResp = (fixture0093 as unknown as CacheEntry).response
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -454,7 +440,7 @@ describe('App (Step1 编排壳)', () => {
           return {
             ok: true,
             status: 200,
-            json: async () => (fixture0093 as unknown as CacheEntry).response,
+            json: async () => liveResp,
           } as Response
         }
         const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)

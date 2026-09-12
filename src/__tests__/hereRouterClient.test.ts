@@ -4,13 +4,13 @@ import type { TrajPoint } from '../types'
 
 // 测试代码豁免静态 import public/；polyline 必须取真实 fixture 的可解码串——
 // 合成串会被 decodeFlexiblePolyline 拒收（评审 blocker 修正：App 的 derive 链会解码它）
-import fixture0033 from '../../public/fixtures/2011_09_30_drive_0033.json'
+import fixture0093 from '../../public/fixtures/2011_09_26_drive_0093.json'
 
 function tp(i: number): TrajPoint {
   return { lat: 49 + i * 1e-4, lng: 8.4 + i * 1e-4, timestamp: i, timestampUtc: '', headingDeg: 0, speedMps: 0, numsats: 7 }
 }
 
-const REAL_POLYLINE = (fixture0033 as unknown as { response: { routes: { sections: { polyline: string }[] }[] } })
+const REAL_POLYLINE = (fixture0093 as unknown as { response: { routes: { sections: { polyline: string }[] }[] } })
   .response.routes[0].sections[0].polyline
 
 const OK_RESPONSE = {

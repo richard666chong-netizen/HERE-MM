@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import trace0033 from '../../public/sample/here/2011_09_30_drive_0033.json'
 import trace0093 from '../../public/sample/here/2011_09_26_drive_0093.json'
 import trace0096 from '../../public/sample/here/2011_09_26_drive_0096.json'
 import trace0106 from '../../public/sample/here/2011_09_26_drive_0106.json'
@@ -156,9 +155,7 @@ describe('deadReckoning（多速率 1:10 航位推算）', () => {
     const mk = (numsats: number): TrajPoint => ({ ...basePoint, numsats })
     expect(detectOutages([10, 10, 3, 3, 10].map(mk))).toEqual([false, false, true, true, false])
     expect(detectOutages([5, 4].map(mk))).toEqual([false, true]) // 边界：≤4 失锁
-    const t33 = trace0033 as unknown as TrajPoint[]
     const t93 = trace0093 as unknown as TrajPoint[]
-    expect(detectOutages(t33).every((o) => !o)).toBe(true) // 0033 全程 min 5 星 → 全 false
     expect(detectOutages(t93).filter(Boolean).length).toBeGreaterThanOrEqual(100) // 实测 206/433
   })
 

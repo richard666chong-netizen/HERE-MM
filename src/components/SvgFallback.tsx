@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
-import { toLocalM, type LatLng } from '../lib/geo'
+import { useMemo, useState } from 'react'
+import { toLocalM, yawToCompassDeg, thinByTimestamp, type LatLng } from '../lib/geo'
+import { getMarkerPopup, type MarkerType } from '../lib/markerInfo'
 import type { DerivedPoint, TrajPoint } from '../types'
 
 export interface SvgFallbackProps {
@@ -7,26 +8,14 @@ export interface SvgFallbackProps {
   derived: DerivedPoint[]
   width: number
   height: number
-  /** 回放：散点/终点标记只画到该下标（含）。缺省 = 全量 */
   upToIndex?: number
-  /** 回放车标（undefined = 无）。位置由 MapView 归一后传入；compassDeg = 罗盘航向（0=北、顺时针，已由 MapView 从 IMU yaw 转换） */
   car?: { lat: number; lng: number; compassDeg: number }
-  /** DR 航位推算轨迹（缺省不渲染）。紫虚线：GNSS 散点之上、匹配路线（蓝）之下；并计入画幅 bbox 防裁剪 */
   drPath?: Array<[number, number]>
-  /** 「接收机实际报的 GNSS」流（缺省 = trace）——散点从它画，`noFix` 帧不画点。
-   *  与 trace 同下标对齐：失锁期位置被冻结，画出来就是一坨不动的点，故直接省略。 */
   gnssPath?: TrajPoint[]
+  interactive?: boolean
 }
 
-/** GNSS 散点抽稀：每 ⌈n/800⌉ 取 1，始终保留首尾点 */
-function thinIndices(n: number): number[] {
-  if (n <= 0) return []
-  const stride = Math.ceil(n / 800)
-  const out: number[] = []
-  for (let i = 0; i < n; i += stride) out.push(i)
-  if (out[out.length - 1] !== n - 1) out.push(n - 1)
-  return out
-}
+
 
 const SCALE_BAR_STEPS_M = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000]
 
@@ -41,7 +30,9 @@ export default function SvgFallback({
   car,
   drPath,
   gnssPath,
+  interactive,
 }: SvgFallbackProps) {
+  const [selected, setSelected] = useState<{ type: MarkerType; index: number } | null>(null)
   const geo = useMemo(() => {
     const dots = gnssPath ?? trace
     // drPath 一并入 bbox（评审 minor 修正）：0093 尾段 15.5s 纯递推分离可达 26m 级，不纳入则紫线被画幅裁剪
@@ -102,11 +93,6 @@ export default function SvgFallback({
       const [x, y] = project(p)
       return [(x - vbX) * unitsPerMeter, (y - vbY) * unitsPerMeter]
     }
-    const xyStr = (p: LatLng): string => {
-      const [x, y] = xy(p)
-      return `${x},${y}`
-    }
-
     // 比例尺（左下角，按米标定）：取最接近 12% 视宽的整刻度
     const metersPerUnit = 1 / unitsPerMeter
     const targetM = vw * 0.12 * metersPerUnit
@@ -117,13 +103,15 @@ export default function SvgFallback({
     const barY = vh - 24
 
     return {
-      vw, vh, xy, xyStr,
-      thin: thinIndices((gnssPath ?? trace).length),
+      vw, vh, xy,
+      thin: thinByTimestamp((gnssPath ?? trace).map((p) => p.timestamp), 1.0, 200),
+      thinDr: drPath ? Array.from({ length: drPath.length }, (_, i) => i).filter((i) => i % Math.max(1, Math.ceil(drPath.length / 800)) === 0) : [],
+      thinMm: derived.length > 0 ? thinByTimestamp(trace.slice(0, derived.length).map((p) => p.timestamp), 1.0, 200) : [],
       barX, barY, barUnits, barLabel,
     }
   }, [trace, derived, drPath, gnssPath])
   if (!geo) return null
-  const { vw, vh, xy, xyStr, thin, barX, barY, barUnits, barLabel } = geo
+  const { vw, vh, xy, thin, thinDr, thinMm, barX, barY, barUnits, barLabel } = geo
   // 仍以全量 trace+derived+drPath 定 bbox——回放期间画幅稳定不跳变（upTo/car 不进 useMemo 依赖）
   const upTo = upToIndex ?? trace.length - 1
 
@@ -131,27 +119,50 @@ export default function SvgFallback({
   // drPath 缺省时保持 Step1 原序（匹配路径在下、散点在上）——既有轨迹渲染零改动。
   const drEl =
     drPath && drPath.length > 0 ? (
-      <polyline
-        data-testid="dr-path"
-        points={drPath.map((p) => xyStr(p)).join(' ')}
-        fill="none"
-        stroke="#7c3aed"
-        strokeWidth={1.5}
-        strokeDasharray="6 3"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
+      <g data-testid="dr-path">
+        <polyline
+          points={drPath.map(([la, ln]) => xy([la, ln] as LatLng).join(',')).join(' ')}
+          fill="none"
+          stroke="rgba(234,179,8,0.4)"
+          strokeWidth={1.5}
+        />
+        {thinDr.map((i) => {
+          const [cx, cy] = xy(drPath[i])
+          const hdg = trace[i] ? yawToCompassDeg(trace[i].headingDeg) : 0
+          return (
+            <polygon
+              key={i}
+              points={`${cx},${cy - 16} ${cx + 10},${cy + 8} ${cx},${cy + 2} ${cx - 10},${cy + 8}`}
+              fill="#eab308"
+              stroke="#a16207"
+              strokeWidth={1.5}
+              transform={`rotate(${hdg} ${cx} ${cy})`}
+              style={interactive ? { cursor: 'pointer' } : undefined}
+              onClick={interactive ? (e) => { e.stopPropagation(); setSelected({ type: 'dr', index: i }) } : undefined}
+            />
+          )
+        })}
+      </g>
     ) : null
   const matchedEl = (
-    <polyline
-      data-testid="matched-path"
-      points={derived.map((d) => xyStr(d.matchedLatLng as LatLng)).join(' ')}
-      fill="none"
-      stroke="#2563eb"
-      strokeWidth={1.5}
-      strokeLinejoin="round"
-      strokeLinecap="round"
-    />
+    <g data-testid="matched-path">
+      {thinMm.map((i) => {
+        const [cx, cy] = xy(derived[i].matchedLatLng as LatLng)
+        const hdg = yawToCompassDeg(derived[i].headingDeg)
+        return (
+          <polygon
+            key={i}
+            points={`${cx},${cy - 16} ${cx + 10},${cy + 8} ${cx},${cy + 2} ${cx - 10},${cy + 8}`}
+            fill="#2563eb"
+            stroke="#1e40af"
+            strokeWidth={1.5}
+            transform={`rotate(${hdg} ${cx} ${cy})`}
+            style={interactive ? { cursor: 'pointer' } : undefined}
+            onClick={interactive ? (e) => { e.stopPropagation(); setSelected({ type: 'mm', index: i }) } : undefined}
+          />
+        )
+      })}
+    </g>
   )
   // GNSS 散点（橙，抽稀；回放下只画已洒到的下标——filter 是每帧仅有的全量遍历）。
   // noFix 帧不画：失锁期接收机无定位解（真实或仿真隧道），画出来是一坨冻住的点，不如留白
@@ -160,7 +171,19 @@ export default function SvgFallback({
     .filter((i) => i <= upTo && !gnssDots[i].noFix)
     .map((i) => {
       const [cx, cy] = xy([gnssDots[i].lat, gnssDots[i].lng])
-      return <circle key={i} data-testid="gnss-dot" cx={cx} cy={cy} r={1.5} fill="#f59e0b" />
+      const hdg = yawToCompassDeg(gnssDots[i].headingDeg)
+      return (
+        <g
+          key={i}
+          data-testid="gnss-dot"
+          transform={`rotate(${hdg} ${cx} ${cy})`}
+          style={interactive ? { cursor: 'pointer' } : undefined}
+          onClick={interactive ? (e) => { e.stopPropagation(); setSelected({ type: 'gnss', index: i }) } : undefined}
+        >
+          <circle cx={cx} cy={cy} r={8} fill="none" stroke="#9ca3af" strokeWidth={2.5} />
+          <line x1={cx} y1={cy} x2={cx} y2={cy - 12} stroke="#9ca3af" strokeWidth={1.5} />
+        </g>
+      )
     })
 
   return (
@@ -171,6 +194,7 @@ export default function SvgFallback({
       style={{ maxWidth: '100%', height: 'auto' }}
       role="img"
       aria-label="无底图 SVG 轨迹渲染（GNSS 散点 + 匹配路径）"
+      onClick={interactive && selected ? () => setSelected(null) : undefined}
     >
       {drEl ? (
         <>
@@ -227,6 +251,27 @@ export default function SvgFallback({
         />
       )}
 
+      {/* 图例 */}
+      <g data-testid="legend" transform={`translate(${vw - 140}, 16)`}>
+        <rect width="130" height={drPath && drPath.length > 0 ? 100 : 76} rx="4" fill="white" fillOpacity="0.85" stroke="#d1d5db" strokeWidth="0.5" />
+        <circle cx="16" cy="22" r="6" fill="none" stroke="#9ca3af" strokeWidth={2} />
+        <line x1="16" y1="22" x2="16" y2="13" stroke="#9ca3af" strokeWidth={1} />
+        <text x="34" y="26" fontSize="13" fill="#374151">GNSS</text>
+        {drPath && drPath.length > 0 ? (
+          <>
+            <polygon points="16,36 24,54 16,50 8,54" fill="#eab308" stroke="#a16207" strokeWidth={1} />
+            <text x="34" y="52" fontSize="13" fill="#374151">DR</text>
+            <polygon points="16,62 24,80 16,76 8,80" fill="#2563eb" stroke="#1e40af" strokeWidth={1} />
+            <text x="34" y="78" fontSize="13" fill="#374151">MM</text>
+          </>
+        ) : (
+          <>
+            <polygon points="16,36 24,54 16,50 8,54" fill="#2563eb" stroke="#1e40af" strokeWidth={1} />
+            <text x="34" y="52" fontSize="13" fill="#374151">MM</text>
+          </>
+        )}
+      </g>
+
       {/* 比例尺 */}
       <g data-testid="scale-bar">
         <line x1={barX} y1={barY} x2={barX + barUnits} y2={barY} stroke="#374151" strokeWidth={2} />
@@ -236,6 +281,27 @@ export default function SvgFallback({
           {barLabel}
         </text>
       </g>
+
+      {interactive && selected && (() => {
+        const popup = getMarkerPopup(selected.type, selected.index, trace, gnssDots, drPath, derived)
+        if (!popup) return null
+        const pw = 250
+        const ph = popup.lines.length * 18 + 56
+        return (
+          <g data-testid="marker-popup" transform="translate(20, 20)" onClick={(e) => e.stopPropagation()}>
+            <rect width={pw} height={ph} rx={4} fill="white" fillOpacity={0.94} stroke="#d1d5db" strokeWidth={0.5} />
+            <text x={12} y={22} fontSize={14} fontWeight="bold" fill="#1f2937">{popup.title}</text>
+            <line x1={12} y1={30} x2={pw - 12} y2={30} stroke="#e5e7eb" strokeWidth={1} />
+            {popup.lines.map(([label, value], j) => (
+              <text key={j} x={12} y={48 + j * 18} fontSize={12} fill="#374151">
+                <tspan fontWeight="bold">{label}</tspan>
+                <tspan dx={8}>{value}</tspan>
+              </text>
+            ))}
+            <text x={12} y={ph - 8} fontSize={10} fill="#9ca3af">点击空白处关闭</text>
+          </g>
+        )
+      })()}
     </svg>
   )
 }
