@@ -247,8 +247,9 @@ export default function App() {
                 padding: '0.3rem 0.9rem',
                 cursor: 'pointer',
                 borderRadius: 6,
-                border: '1px solid #e5e7eb',
-                background: mode === m.id ? '#eff6ff' : '#ffffff',
+                border: `1px solid ${mode === m.id ? '#2563eb' : '#e5e7eb'}`,
+                background: mode === m.id ? '#2563eb' : '#ffffff',
+                color: mode === m.id ? '#ffffff' : 'inherit',
                 fontWeight: mode === m.id ? 700 : 400,
               }}
             >

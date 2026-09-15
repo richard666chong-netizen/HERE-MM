@@ -202,6 +202,7 @@ export default function MapView({
   const dotsRef = useRef<TrajPoint[] | null>(null) // 账本所属散点源（换源即重洒）
   const sprayedMapRef = useRef<HereMap | null>(null) // 账本所属地图实例（stale-map 守卫）
   const carRef = useRef<HereMarker | null>(null)
+  const endMarkerRef = useRef<HereMarker | null>(null)
   const iconCacheRef = useRef(new Map<number, unknown>())
   const triangleIconCacheRef = useRef(new Map<string, unknown>())
 
@@ -222,6 +223,7 @@ export default function MapView({
     sprayedMapRef.current = null
     dotsRef.current = dots
     carRef.current = null
+    endMarkerRef.current = null
     triangleIconCacheRef.current = new Map()
 
     // DR 航位推算：polyline 连续线 + 稀疏方向箭头。HERE SDK marker >500 会 culling，
@@ -248,6 +250,14 @@ export default function MapView({
 
     // 匹配路径点（蓝色三角，航向 = IMU yaw 透传）
     if (showMm && derived.length > 0) {
+      const mmLs = new here.geo.LineString()
+      for (const i of thinByTimestamp(trace.map((p) => p.timestamp), 0.1, 2000)) {
+        if (!derived[i]) continue
+        mmLs.pushPoint({ lat: derived[i].matchedLatLng[0], lng: derived[i].matchedLatLng[1] })
+      }
+      map.addObject(
+        new here.map.Polyline(mmLs, { style: { strokeColor: 'rgba(37,99,235,0.7)', lineWidth: 4 } }),
+      )
       for (const i of thinByTimestamp(trace.map((p) => p.timestamp), 1.0, 200)) {
         const hdg = yawToCompassDeg(derived[i].headingDeg)
         const m = new here.map.Marker(
@@ -259,6 +269,19 @@ export default function MapView({
         })
         map.addObject(m)
       }
+    }
+
+    // 起点标记（绿点，恒画）：终点红点归喷洒 effect（随回放进度增删），起点与进度无关故画在建图期
+    if (trace.length > 0) {
+      map.addObject(
+        new here.map.Marker(
+          { lat: trace[0].lat, lng: trace[0].lng },
+          { icon: new here.map.Icon(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" fill="#16a34a" stroke="#fff" stroke-width="2"/></svg>',
+            { anchor: { x: 10, y: 10 } },
+          ) },
+        ),
+      )
     }
 
     // 视野适配：H.geo.Rect 构造参数顺序 = (top, left, bottom, right)，即 (north, west, south, east)。
@@ -288,6 +311,7 @@ export default function MapView({
       objRef.current = []
       sprayedMapRef.current = null
       carRef.current = null
+      endMarkerRef.current = null
       triangleIconCacheRef.current = new Map()
     }
   }, [here, apikey, trace, derived, drPath, showMm])
@@ -342,6 +366,23 @@ export default function MapView({
       sprayedRef.current.push(i)
       objRef.current.push(obj)
     }
+
+    // 终点标记（红点，回放至末帧出现、回拖消失）。归喷洒 effect 而非建图 effect：
+    // 建图 effect 依赖 trace/derived（回放进度不在依赖里），挂那里终点只会「建图时定终身」不随回放增删。
+    const finished = trace.length > 0 && upToClamped >= trace.length - 1
+    if (finished && !endMarkerRef.current) {
+      endMarkerRef.current = new here.map.Marker(
+        { lat: trace[trace.length - 1].lat, lng: trace[trace.length - 1].lng },
+        { icon: new here.map.Icon(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" fill="#dc2626" stroke="#fff" stroke-width="2"/></svg>',
+          { anchor: { x: 10, y: 10 } },
+        ) },
+      )
+      map.addObject(endMarkerRef.current)
+    } else if (!finished && endMarkerRef.current) {
+      map.removeObject(endMarkerRef.current)
+      endMarkerRef.current = null
+    }
   }, [here, upTo, trace, dots, gnssSampleIdx])
 
   // 车标：位置沿匹配路径垂足，航向烘焙进分桶图标。
@@ -358,6 +399,8 @@ export default function MapView({
       return
     }
     if (iconCacheRef.current.size === 0) {
+      // 预热全部 72 个航向桶（评审 minor 采纳）：data-URI SVG icon 异步 LOADING，
+      // 惰性创建会在弯道换桶瞬间闪空 1–2 帧；预热后 setIcon 恒命中 READY 态
       for (let h = 0; h < 360; h += 5) carIcon(here, iconCacheRef.current, h)
     }
     const coord = { lat: carState.lat, lng: carState.lng }

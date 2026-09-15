@@ -1,5 +1,5 @@
 import { memo, useMemo } from 'react'
-import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, Tooltip, XAxis, YAxis } from 'recharts'
 import { sliceWindow } from '../lib/playback'
 import type { DerivedPoint, TrajPoint } from '../types'
 
@@ -33,16 +33,15 @@ const ReplayAreaChart = memo(function ReplayAreaChart({
 }) {
   return (
     <AreaChart width={CHART_W} height={CHART_H} data={data} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
       <XAxis dataKey="t" type="number" domain={[from, to]} tickFormatter={(v: number) => `${v.toFixed(0)}s`} />
       <YAxis width={28} domain={[0, ymax]} />
       <Tooltip formatter={(v) => `${Number(v).toFixed(2)} m`} />
       <Area
         dataKey="deviationM"
         name="Lateral Deviation"
-        stroke="#f59e0b"
-        fill="#f59e0b"
-        fillOpacity={0.25}
+        stroke="#2563eb"
+        fill="#2563eb"
+        fillOpacity={0.2}
         strokeWidth={1.5}
         dot={false}
         isAnimationActive={false}

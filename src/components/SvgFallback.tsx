@@ -148,6 +148,12 @@ export default function SvgFallback({
     ) : null
   const matchedEl = showMm ? (
     <g data-testid="matched-path">
+      <polyline
+        points={derived.map((d) => xy(d.matchedLatLng as LatLng).join(',')).join(' ')}
+        fill="none"
+        stroke="rgba(37,99,235,0.7)"
+        strokeWidth={2}
+      />
       {thinMm.map((i) => {
         const [cx, cy] = xy(derived[i].matchedLatLng as LatLng)
         const hdg = yawToCompassDeg(derived[i].headingDeg)

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, Bar, BarChart, Tooltip, XAxis, YAxis } from 'recharts'
 import type { DerivedPoint, TrajPoint } from '../types'
 import { deviationHistogram, deviationStats, deviationVsDistance } from '../lib/stats'
 
@@ -29,10 +29,10 @@ const chipStyle: CSSProperties = {
   flexDirection: 'column',
   alignItems: 'center',
   gap: 2,
-  padding: '0.5rem 0.25rem',
-  border: '1px solid #e5e7eb',
+  padding: '0.5rem 0.6rem',
+  border: '1px solid #dbeafe',
   borderRadius: 8,
-  background: '#f9fafb',
+  background: '#eff6ff',
   flex: 1,
 }
 const chartTitleStyle: CSSProperties = {
@@ -96,8 +96,8 @@ function InfoChip({ chip }: { chip: ChipDef }) {
         style={INFO_ICON_STYLE}
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v) }}
       >i</span>
-      <span style={{ fontSize: 12, color: '#6b7280' }}>{chip.label}</span>
-      <strong style={{ fontSize: 15 }}>{chip.value.toFixed(2)} m</strong>
+      <span style={{ fontSize: 11, color: '#6b7280' }}>{chip.label}</span>
+      <strong style={{ fontSize: 20, color: '#1e40af' }}>{chip.value.toFixed(2)} m</strong>
       {open && (
         <div style={POPOVER_STYLE}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>{chip.label}</div>
@@ -158,7 +158,7 @@ export default function StatsPanel({ trace, derived, drMaxDriftM }: StatsPanelPr
   return (
     <aside style={panelStyle}>
       <h2 style={{ ...chartTitleStyle, marginTop: 0 }}>Deviation Stats</h2>
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
         {chips.map((chip) => (
           <InfoChip key={chip.label} chip={chip} />
         ))}
@@ -166,7 +166,6 @@ export default function StatsPanel({ trace, derived, drMaxDriftM }: StatsPanelPr
 
       <h2 style={chartTitleStyle}>Deviation Histogram</h2>
       <BarChart width={CHART_W} height={CHART_H} data={histData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="range" tick={false} label={{ value: 'Lateral Deviation (m)', position: 'insideBottom', offset: -2, fontSize: 11 }} />
         <YAxis allowDecimals={false} width={28} />
         <Tooltip />
@@ -175,7 +174,6 @@ export default function StatsPanel({ trace, derived, drMaxDriftM }: StatsPanelPr
 
       <h2 style={chartTitleStyle}>Deviation vs. Distance</h2>
       <AreaChart width={CHART_W} height={CHART_H} data={distData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis
           dataKey="distanceKm"
           type="number"
@@ -185,7 +183,7 @@ export default function StatsPanel({ trace, derived, drMaxDriftM }: StatsPanelPr
         />
         <YAxis width={28} />
         <Tooltip formatter={(v) => `${Number(v).toFixed(2)} m`} />
-        <Area dataKey="deviationM" name="Lateral Deviation" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.25} strokeWidth={1.5} dot={false} />
+        <Area dataKey="deviationM" name="Lateral Deviation" stroke="#2563eb" fill="#2563eb" fillOpacity={0.2} strokeWidth={1.5} dot={false} />
       </AreaChart>
     </aside>
   )
