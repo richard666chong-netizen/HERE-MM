@@ -93,8 +93,8 @@ describe('interpHeadingDeg', () => {
     expect(interpHeadingDeg(350, 10, 0.5)).toBeCloseTo(360, 10)
     expect(interpHeadingDeg(10, 350, 0.5)).toBeCloseTo(0, 10)
   })
-  it('frac 端点取原值', () => {
+  it('frac 端点：0 取 h0；1 为 370（线性外推端点，与 10 相差整 360°，由调用方 yawToCompassDeg 归一为同一罗盘角）', () => {
     expect(interpHeadingDeg(350, 10, 0)).toBe(350)
-    expect(interpHeadingDeg(350, 10, 1)).toBe(10)
+    expect(interpHeadingDeg(350, 10, 1)).toBe(370)
   })
 })

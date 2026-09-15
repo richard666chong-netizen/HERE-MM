@@ -59,10 +59,8 @@ export function interpCarPos(
   return [a[0] + (b[0] - a[0]) * frac, a[1] + (b[1] - a[1]) * frac]
 }
 
-/** 航向最短弧插值：±180° 环绕处理后线性过渡。端点（frac≤0/≥1）取原值；不取模——由调用方 yawToCompassDeg 归一。 */
+/** 航向最短弧插值：±180° 环绕处理后线性过渡。不取模——由调用方 yawToCompassDeg 归一。 */
 export function interpHeadingDeg(h0: number, h1: number, frac: number): number {
-  if (frac <= 0) return h0
-  if (frac >= 1) return h1
   let d = h1 - h0
   if (d > 180) d -= 360
   if (d < -180) d += 360
