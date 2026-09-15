@@ -84,3 +84,29 @@ describe('usePlayback', () => {
     expect(result.current.playing).toBe(false)
   })
 })
+
+describe('usePlayback pos（子帧浮点暴露）', () => {
+  it('pos 每帧浮点更新；index 保持整数（pos − index ∈ [0,1)）', () => {
+    const { result } = renderHook(() => usePlayback(9))
+    act(() => result.current.play())
+    act(() => flushFrame(0)) // 基线
+    act(() => flushFrame(50)) // dt=50ms → +0.5
+    expect(result.current.pos).toBeCloseTo(0.5, 10)
+    expect(result.current.index).toBe(0)
+    act(() => flushFrame(100)) // dt=50ms → +0.5 → 1.0（rAF 时间戳为绝对时间，须递增）
+    expect(result.current.pos).toBeCloseTo(1, 10)
+    expect(result.current.index).toBe(1)
+  })
+
+  it('seek 同步 pos；终点 pos === lastIndex；终点重播归零；lastIndex 复位归零', () => {
+    const { result } = renderHook(() => usePlayback(9))
+    act(() => result.current.seek(3))
+    expect(result.current.pos).toBe(3)
+    act(() => result.current.play())
+    act(() => flushFrame(0))
+    act(() => flushFrame(10000)) // 远超终点 → 钳制
+    expect(result.current.pos).toBe(9)
+    act(() => result.current.play()) // 终点重播
+    expect(result.current.pos).toBe(0)
+  })
+})

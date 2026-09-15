@@ -6,6 +6,8 @@ export type PlaybackSpeed = 1 | 2 | 5
 export interface Playback {
   /** 当前整数下标（0..lastIndex）；仅整数变化才触发重渲染 */
   index: number
+  /** 当前浮点位置（0..lastIndex，rAF 每帧更新）——子帧插值的时钟源 */
+  pos: number
   playing: boolean
   speed: PlaybackSpeed
   play(): void
@@ -19,6 +21,7 @@ export interface Playback {
  *  到达终点自动暂停；终点 play() 从头重播（demo 友好）；lastIndex 变化自动复位。 */
 export function usePlayback(lastIndex: number, pps = 10): Playback {
   const [index, setIndex] = useState(0)
+  const [pos, setPos] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeedState] = useState<PlaybackSpeed>(1)
   const posRef = useRef(0)
@@ -37,6 +40,7 @@ export function usePlayback(lastIndex: number, pps = 10): Playback {
         const next = advancePlayback(posRef.current, now - lastTsRef.current, speedRef.current, pps, lastIndex)
         lastTsRef.current = now
         posRef.current = next
+        setPos(next)
         const i = Math.floor(next)
         setIndex((prev) => (prev === i ? prev : i))
         if (next >= lastIndex) {
@@ -59,6 +63,7 @@ export function usePlayback(lastIndex: number, pps = 10): Playback {
     posRef.current = 0
     playingRef.current = false
     setIndex(0)
+    setPos(0)
     setPlaying(false)
   }, [lastIndex])
 
@@ -67,6 +72,7 @@ export function usePlayback(lastIndex: number, pps = 10): Playback {
     if (posRef.current >= lastIndex) {
       posRef.current = 0 // 终点重播
       setIndex(0)
+      setPos(0)
     }
     playingRef.current = true
     lastTsRef.current = null
@@ -93,9 +99,10 @@ export function usePlayback(lastIndex: number, pps = 10): Playback {
       const clamped = Math.max(0, Math.min(Math.round(i), lastIndex))
       posRef.current = clamped
       setIndex(clamped)
+      setPos(clamped)
     },
     [lastIndex],
   )
 
-  return { index, playing, speed, play, pause, toggle, setSpeed, seek }
+  return { index, pos, playing, speed, play, pause, toggle, setSpeed, seek }
 }
