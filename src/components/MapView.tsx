@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import SvgFallback from './SvgFallback'
 import { yawToCompassDeg, thinByTimestamp } from '../lib/geo'
+import { interpCarPos, interpHeadingDeg } from '../lib/playback'
 import { getMarkerPopup, type MarkerType } from '../lib/markerInfo'
 import type { DerivedPoint, TrajPoint } from '../types'
 
@@ -11,13 +12,15 @@ export interface MapViewProps {
   apikey: string
   /** 回放：GNSS 散点洒到该下标（含）。缺省 = 全量（静态模式） */
   upToIndex?: number
-  /** 回放：车标下标——位置取 derived[carIndex].matchedLatLng，航向取 trace[carIndex].headingDeg（IMU yaw）。缺省 = 无车标 */
-  carIndex?: number
+  /** 回放：车标浮点位置——位置取相邻垂足插值（interpCarPos），航向取 IMU yaw 最短弧插值（interpHeadingDeg）。缺省 = 无车标 */
+  carPos?: number
   /** DR 航位推算轨迹（缺省不渲染）。紫折线：匹配路线（蓝）之下；并计入 setLookAtData bounds 防初始视野裁剪 */
   drPath?: Array<[number, number]>
   /** 「接收机实际报的 GNSS」流（缺省 = trace）——散点从它画，`noFix` 帧不画。
    *  与 trace 同下标对齐；失锁期位置被冻结，故直接省略而非画一坨不动的点。 */
   gnssPath?: TrajPoint[]
+  /** 是否渲染 MM 匹配路径蓝色箭头（客户演示模式隐藏） */
+  showMm?: boolean
   interactive?: boolean
 }
 
@@ -25,6 +28,7 @@ export interface MapViewProps {
  *  'ok' 路径仅在真实浏览器执行（手动验收覆盖），jsdom 测试只覆盖 fallback 路径。 */
 interface HereDefaultLayers {
   vector: { normal: { map: unknown } }
+  raster: { normal: { map: unknown } }
 }
 
 interface HereMarker {
@@ -36,8 +40,10 @@ interface HereMarker {
 interface HereMap {
   addObject(obj: unknown): void
   removeObject(obj: unknown): void
-  /** 3.1 视野适配入口（Step1 运行时源码核实：无 setViewBounds，经 ViewModel.setLookAtData({bounds})） */
-  getViewModel(): { setLookAtData(data: { bounds?: unknown; zoom?: number; tilt?: number; heading?: number }): void }
+  setCenter(coord: { lat: number; lng: number }): void
+  setZoom(z: number): void
+  getZoom(): number
+  getViewModel(): { setLookAtData(data: { bounds?: unknown; zoom?: number; tilt?: number; heading?: number; center?: { lat: number; lng: number } }): void }
   dispose(): void
 }
 
@@ -87,16 +93,24 @@ function getHere(): HereNS | null {
 /** 车标图标：SVG 箭头烘焙航向（HERE 3.1 marker 无原生 rotation），5° 分桶缓存（≤72 个）。
  *  评审已实证 opts.anchor 平面对象可行（官方 3.1 文档示例即用字面量），无需兜底；
  *  运行时预案（Errata 模式）仅剩：若 marker.setGeometry/setIcon 不存在，退化为每帧 removeObject + addObject 重建车标。 */
-function carIcon(here: HereNS, cache: Map<number, unknown>, compassDeg: number): unknown {
+function carIcon(here: HereNS, cache: Map<number, unknown>, compassDeg: number, size = 56): unknown {
   const bucket = ((Math.round(compassDeg / 5) * 5) % 360 + 360) % 360
-  let icon = cache.get(bucket)
+  const key = size === 56 ? bucket : bucket + 1000
+  let icon = cache.get(key)
   if (!icon) {
+    const half = size / 2
+    const r = size * 0.43
+    const tip = size * 0.14
+    const base = size * 0.86
+    const left = size * 0.29
+    const right = size * 0.71
     const svg =
-      `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">` +
-      `<polygon points="14,4 8,24 14,19 20,24" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5" ` +
-      `transform="rotate(${bucket} 14 14)"/></svg>`
-    icon = new here.map.Icon(svg, { anchor: { x: 14, y: 14 } })
-    cache.set(bucket, icon)
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+      `<circle cx="${half}" cy="${half}" r="${r}" fill="none" stroke="#1d4ed8" stroke-width="4" stroke-opacity="0.35"/>` +
+      `<polygon points="${half},${tip} ${left},${base} ${half},${base*0.79} ${right},${base}" fill="#1d4ed8" stroke="#ffffff" stroke-width="3" ` +
+      `transform="rotate(${bucket} ${half} ${half})"/></svg>`
+    icon = new here.map.Icon(svg, { anchor: { x: half, y: half } })
+    cache.set(key, icon)
   }
   return icon
 }
@@ -116,10 +130,10 @@ function markerIcon(
     let svg: string
     if (type === 'gnss') {
       svg =
-        `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">` +
-        `<circle cx="18" cy="18" r="12" fill="none" stroke="#9ca3af" stroke-width="3"/>` +
-        `<line x1="18" y1="18" x2="18" y2="4" stroke="#9ca3af" stroke-width="2" ` +
-        `transform="rotate(${bucket} 18 18)"/></svg>`
+        `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">` +
+        `<circle cx="14" cy="14" r="9" fill="none" stroke="#9ca3af" stroke-width="2.5"/>` +
+        `<line x1="14" y1="14" x2="14" y2="3" stroke="#9ca3af" stroke-width="1.5" ` +
+        `transform="rotate(${bucket} 14 14)"/></svg>`
     } else if (type === 'dr') {
       svg =
         `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">` +
@@ -131,33 +145,52 @@ function markerIcon(
         `<polygon points="20,3 31,29 20,22 9,29" fill="#2563eb" stroke="#1e40af" stroke-width="1.5" ` +
         `transform="rotate(${bucket} 20 20)"/></svg>`
     }
-    icon = new here.map.Icon(svg, { anchor: { x: 20, y: 20 } })
+    const half = type === 'gnss' ? 14 : 20
+    icon = new here.map.Icon(svg, { anchor: { x: half, y: half } })
     cache.set(key, icon)
   }
   return icon
 }
 
 /** 地图视图：mapStatus='ok' 初始化 HERE 地图（App 层保证此时 window.H 已就绪）；否则渲染无底图 SVG 兜底。
- *  Step2：upToIndex 归一为 upTo（缺省全量）→ HERE 散点走增量喷洒 effect；carIndex 驱动车标。 */
+ *  Step2：upToIndex 归一为 upTo（缺省全量）→ HERE 散点走增量喷洒 effect；carPos 驱动车标。 */
 export default function MapView({
   trace,
   derived,
   mapStatus,
   apikey,
   upToIndex,
-  carIndex,
+  carPos,
   drPath,
   gnssPath,
+  showMm = true,
   interactive,
 }: MapViewProps) {
   const hostRef = useRef<HTMLDivElement>(null)
-  const here = mapStatus === 'ok' ? getHere() : null // 'ok' 但 H 缺席时兜底走 SVG，防白屏
+  const [headingUp, setHeadingUp] = useState(false)
+  const here = mapStatus === 'ok' ? getHere() : null
   const upTo = upToIndex ?? trace.length - 1
-  const dots = gnssPath ?? trace // 散点源（默认真值；给了 gnssPath 就是接收机实际报的流）
+  const dots = gnssPath ?? trace
   const gnssSampleIdx = useMemo(
     () => thinByTimestamp(dots.map((p) => p.timestamp), 1.0, 200),
     [dots],
   )
+  /** 车标状态（子帧插值唯一计算点）：HERE effect、SVG 兜底分支、heading-up 旋转三处共用 */
+  const carState = useMemo(() => {
+    if (carPos === undefined || trace.length === 0) return undefined
+    const last = trace.length - 1
+    const clamped = Math.max(0, Math.min(carPos, last))
+    const i0 = Math.floor(clamped)
+    const i1 = Math.min(i0 + 1, last)
+    const frac = i0 === i1 ? 0 : clamped - i0
+    const [lat, lng] = interpCarPos(clamped, trace, derived)
+    return {
+      lat,
+      lng,
+      compassDeg: yawToCompassDeg(interpHeadingDeg(trace[i0].headingDeg, trace[i1].headingDeg, frac)),
+    }
+  }, [carPos, trace, derived])
+  const compassDeg = carState?.compassDeg ?? 0
   const [selected, setSelected] = useState<{ type: MarkerType; index: number } | null>(null)
   const interactiveRef = useRef(interactive)
   interactiveRef.current = interactive
@@ -214,7 +247,7 @@ export default function MapView({
     }
 
     // 匹配路径点（蓝色三角，航向 = IMU yaw 透传）
-    if (derived.length > 0) {
+    if (showMm && derived.length > 0) {
       for (const i of thinByTimestamp(trace.map((p) => p.timestamp), 1.0, 200)) {
         const hdg = yawToCompassDeg(derived[i].headingDeg)
         const m = new here.map.Marker(
@@ -257,7 +290,7 @@ export default function MapView({
       carRef.current = null
       triangleIconCacheRef.current = new Map()
     }
-  }, [here, apikey, trace, derived, drPath])
+  }, [here, apikey, trace, derived, drPath, showMm])
 
   // GNSS 喷洒：sprayPlan 纯函数算增量（前进补洒/回退回收），本 effect 只做对象映射。
   // ⚠ 无 cleanup（评审 blocker 修正）：React 在每次依赖变化时都先跑上一轮 cleanup，
@@ -317,7 +350,7 @@ export default function MapView({
   useEffect(() => {
     const map = mapRef.current
     if (!here || !map) return
-    if (carIndex === undefined || !trace[carIndex]) {
+    if (!carState) {
       if (carRef.current) {
         map.removeObject(carRef.current)
         carRef.current = null
@@ -325,15 +358,16 @@ export default function MapView({
       return
     }
     if (iconCacheRef.current.size === 0) {
-      // 预热全部 72 个航向桶（评审 minor 采纳）：data-URI SVG icon 异步 LOADING，
-      // 惰性创建会在弯道换桶瞬间闪空 1–2 帧；预热后 setIcon 恒命中 READY 态
       for (let h = 0; h < 360; h += 5) carIcon(here, iconCacheRef.current, h)
     }
-    const d = derived[carIndex]
-    const coord = d
-      ? { lat: d.matchedLatLng[0], lng: d.matchedLatLng[1] }
-      : { lat: trace[carIndex].lat, lng: trace[carIndex].lng }
-    const icon = carIcon(here, iconCacheRef.current, yawToCompassDeg(trace[carIndex].headingDeg))
+    const coord = { lat: carState.lat, lng: carState.lng }
+    try {
+      map.setCenter(coord)
+      map.setZoom(headingUp ? 16 : 17)
+    } catch {
+      // 静默
+    }
+    const icon = carIcon(here, iconCacheRef.current, carState.compassDeg, 56)
     if (!carRef.current) {
       carRef.current = new here.map.Marker(coord, { icon, volatility: true })
       map.addObject(carRef.current)
@@ -341,19 +375,12 @@ export default function MapView({
       carRef.current.setGeometry(coord)
       carRef.current.setIcon(icon)
     }
-  }, [here, carIndex, trace, derived])
+  }, [here, carState, headingUp])
 
   if (!here) {
-    const car =
-      carIndex !== undefined && trace[carIndex]
-        ? {
-            lat: derived[carIndex]?.matchedLatLng[0] ?? trace[carIndex].lat,
-            lng: derived[carIndex]?.matchedLatLng[1] ?? trace[carIndex].lng,
-            compassDeg: yawToCompassDeg(trace[carIndex].headingDeg), // yaw→罗盘，两渲染路径共用此归一点
-          }
-        : undefined
+    const car = carState
     return (
-      <div style={{ width: '100%', height: '100%' }}>
+      <div style={{ position: 'relative', width: '100%', height: '100%' }}>
         <SvgFallback
           trace={trace}
           derived={derived}
@@ -363,14 +390,41 @@ export default function MapView({
           car={car}
           drPath={drPath}
           gnssPath={gnssPath}
+          showMm={showMm}
           interactive={interactive}
         />
       </div>
     )
   }
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <div ref={hostRef} style={{ width: '100%', height: '100%' }} />
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      <div
+        ref={hostRef}
+        style={{
+          position: 'absolute',
+          width: '100%',
+          height: '134%',
+          top: 0,
+          left: 0,
+          transform: headingUp
+            ? `rotate(${(360 - compassDeg) % 360}deg) scale(2.3)`
+            : 'none',
+          transformOrigin: 'center center',
+        }}
+      />
+      {carPos !== undefined && (
+        <button
+          type="button"
+          onClick={() => setHeadingUp((v) => !v)}
+          style={{
+            position: 'absolute', top: 12, left: 12, zIndex: 10,
+            padding: '0.35rem 0.8rem', fontSize: 13, cursor: 'pointer',
+            borderRadius: 6, border: '1px solid #d1d5db', background: 'rgba(255,255,255,0.95)',
+          }}
+        >
+          {headingUp ? 'North Up' : 'Heading Up'}
+        </button>
+      )}
       <div
         data-testid="map-legend"
         style={{
@@ -401,12 +455,14 @@ export default function MapView({
             DR
           </div>
         ) : null}
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <svg width="20" height="20" viewBox="0 0 20 20" style={{ marginRight: 8 }}>
-            <polygon points="10,2 17,16 10,12 3,16" fill="#2563eb" stroke="#1e40af" strokeWidth="1" />
-          </svg>
-          MM
-        </div>
+        {showMm ? (
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <svg width="20" height="20" viewBox="0 0 20 20" style={{ marginRight: 8 }}>
+              <polygon points="10,2 17,16 10,12 3,16" fill="#2563eb" stroke="#1e40af" strokeWidth="1" />
+            </svg>
+            MM
+          </div>
+        ) : null}
       </div>
 
       {interactive && selected && (() => {

@@ -59,26 +59,21 @@ describe('MapView replay（SvgFallback 路径）', () => {
   // 而非 GNSS 原始点——测试数据重合时两种实现都过，错开后可判别
   const derived = [dp(0, 49.001, 8.401), dp(1, 49.015, 8.406), dp(2, 49.019, 8.409)]
 
-  it('upToIndex limits spray to 1 dot + start marker only; car renders with heading rotation', () => {
+  it('upToIndex limits spray to 1 dot + start marker only; car marker present as HTML overlay', () => {
     const { container } = render(
-      <MapView trace={trace} derived={derived} mapStatus="fallback" apikey="" upToIndex={1} carIndex={1} />,
+      <MapView trace={trace} derived={derived} mapStatus="fallback" apikey="" upToIndex={1} carPos={1} />,
     )
     expect(container.querySelectorAll('[data-testid="gnss-dot"]').length).toBe(1) // 1Hz 抽稀：下标 0
     expect(container.querySelectorAll('[data-testid="endpoint-marker"]').length).toBe(1) // 仅起点，终点未到
     const car = container.querySelector('[data-testid="car-marker"]')
     expect(car).toBeTruthy()
-    expect(car!.getAttribute('transform')).toMatch(/translate/)
-    expect(car!.getAttribute('transform')).toMatch(/rotate\(0/) // IMU yaw 90°=正北 → 罗盘 0°
-    // 车标位置 = 匹配路线垂足 ≠ GNSS 原始点（gnss-dot 即 trace 位置的现成探针）
-    const m = car!.getAttribute('transform')!.match(/translate\(([-\d.]+) ([-\d.]+)\)/)!
-    const dot0 = container.querySelectorAll('[data-testid="gnss-dot"]')[0] as SVGElement
-    const dx = Number(dot0.querySelector('circle')!.getAttribute('cx'))
-    const dy = Number(dot0.querySelector('circle')!.getAttribute('cy'))
-    expect(Number(m[1])).not.toBeCloseTo(dx, 1)
-    expect(Number(m[2])).not.toBeCloseTo(dy, 1)
+    // 车标为 HTML 叠层（固定在容器中心），不随 SVG viewBox 缩放
+    expect(car!.tagName).toBe('DIV')
+    const carCircle = container.querySelector('[data-testid="car-position-circle"]')
+    expect(carCircle).toBeTruthy()
   })
 
-  it('upToIndex = last restores full static render; no car marker without carIndex', () => {
+  it('upToIndex = last restores full static render; no car marker without carPos', () => {
     const { container } = render(
       <MapView trace={trace} derived={derived} mapStatus="fallback" apikey="" upToIndex={2} />,
     )

@@ -23,8 +23,8 @@ const DRIVE_IDS = [
 
 // spec L45 双模式：工程分析（静态对比）/ 客户演示（回放）
 const MODES = [
-  { id: 'analysis', label: '工程分析模式' },
-  { id: 'demo', label: '客户演示模式' },
+  { id: 'analysis', label: 'Analysis' },
+  { id: 'demo', label: 'Demo' },
 ] as const
 type Mode = (typeof MODES)[number]['id']
 
@@ -32,6 +32,8 @@ interface DriveData {
   trace: TrajPoint[]
   /** 退化 GNSS 流（散点画它、DR 递推用它）；隧道关闭且无 posmode 时与 trace 同引用 */
   gnssFeed: TrajPoint[]
+  /** DR 增强后的轨迹（发给 HERE MM 的）；无退化时与 trace 同引用 */
+  liveTrace: TrajPoint[]
   derived: DerivedPoint[]
   entry: CacheEntry
 }
@@ -57,13 +59,9 @@ export default function App() {
   const [mapStatus, setMapStatus] = useState<MapStatus>(apikey ? 'pending' : 'fallback')
   const [mode, setMode] = useState<Mode>('analysis')
 
-  // 门控阈值 4（≤4 星 = 失锁叙事）
-  // 轨迹含失锁点才递推，否则 null → drPath 缺省不渲染。仅随 data 重算，不进回放逐帧路径。
-  // Step5：递推的输入是 buildGnssFeed 的退化 GNSS 流（失锁期冻在最后一帧有效定位）——
-  // OXTS 在失锁期是 INS 桥接解 ≈ 真值，直接喂 DR 只会复读真值（无 posmode 的旧数据原样返回）。
-  // 语义不变：deviationM 仍是原始 GNSS→匹配路线（= DR+MM 联合纠偏量），统计/回放管线不动。
-  // 门控两路：真实失锁（numsats≤4，保住 0093 的 DR 层）+ 流内 noFix 帧（仿真隧道）。
-  // 两者都无 → null → drPath 缺省不渲染。
+  // DR 渲染层：仅在有失锁时才渲染黄色 DR 路径（drPath）。DR 推算本身始终运行（liveTrace 已含 DR 结果）,
+  // 但无失锁时 DR ≈ GNSS, drPath 与 GNSS 散点重合, 无渲染必要。
+  // 门控两路：真实失锁（numsats≤4）+ 流内 noFix 帧（仿真隧道）。两者都无 → null → drPath 缺省不渲染。
   const dr = useMemo(() => {
     if (!data) return null
     const hasOutage =
@@ -71,8 +69,9 @@ export default function App() {
     return hasOutage ? deadReckon(data.gnssFeed) : null
   }, [data])
 
-  // DR 漂移读数（演示口径左半边）：隧道/失锁期 DR 推算位置与真值的最大偏差。
-  // 右半边是 StatsPanel 既有的 deviationM（真值→匹配路线）。二者对比即「DR 漂了 67m，MM 绑路后 X m」。
+  // DR 漂移读数：本地简易 DR 推算位置与 OXTS 输出（含 INS 桥接）的最大偏差。
+  // 左半边（deviationM = 本地 DR → HERE MM 纠偏量）。右半边（drMaxDriftM = 本地 DR → OXTS 精度差距）。
+  // 二者对比即「DR 漂了 67m，MM 绑路后 X m」。OXTS 非独立真值，是同一套传感器更精密的融合解。
   const drMaxDriftM = useMemo(() => {
     if (!dr || !data) return undefined
     let max = 0
@@ -118,16 +117,12 @@ export default function App() {
         const traceRes = await fetch(`/sample/here/${driveId}.json`)
         if (!traceRes.ok) throw new Error(`trace load failed: ${driveId}`)
         const trace = (await traceRes.json()) as TrajPoint[]
-        // DR 增强（Step4 T4）：门控阈值 4——轨迹含失锁点时，live 请求的 trace 用 DR 位置
-        // 替换 lat/lng（其余字段透传）。0093 的 ≤4 星点 → DR 增强。
-        // Step5：递推输入为 buildGnssFeed 的退化流（posmode==0 期冻结；无该列的旧数据原样）。
-        // 缓存/fixture 路径不增强（离线即所录即所得）。
+        // DR 始终运行：无退化时 DR 在 1Hz GNSS 纠正间做 10Hz 插值，
+        // 有退化时 DR 在失锁期自由递推。递推输入为 buildGnssFeed 的退化流（posmode==0 期冻结；
+        // 无该列且隧道关闭时与 trace 同引用）。
         const gnssFeed = buildGnssFeed(trace, { tunnelDurationS: tunnelS || undefined })
-        const hasOutage = detectOutages(trace, 4).some(Boolean) || gnssFeed.some((p) => p.noFix)
-        const drPositions = apikey && hasOutage ? deadReckon(gnssFeed).positions : null
-        const liveTrace = drPositions
-          ? gnssFeed.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] }))
-          : trace
+        const drPositions = deadReckon(gnssFeed).positions
+        const liveTrace = gnssFeed.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] }))
         const entry = await matchService(
           driveId,
           apikey ? { apikey, trace: liveTrace } : undefined,
@@ -137,10 +132,10 @@ export default function App() {
         // 未缓存（fixture 的 derived 为空）→ 派生并回填缓存
         let derived = entry.derived
         if (derived.length === 0) {
-          derived = derive(trace, entry.response)
+          derived = derive(liveTrace, entry.response)
           writeCache({ ...entry, derived }, variant)
         }
-        setData({ trace, gnssFeed, derived, entry: { ...entry, derived } })
+        setData({ trace, gnssFeed, liveTrace, derived, entry: { ...entry, derived } })
       } catch (e) {
         // live entry 可能已写缓存但 derive 失败（如坏 polyline）——驱逐防毒化：
         // 缓存命中短路会绕过 fixture 回落，直到手动清缓存（Step3 终审 minor 采纳）
@@ -204,7 +199,7 @@ export default function App() {
       >
         <h1 style={{ fontSize: '1.05rem', margin: 0 }}>HERE Map Matching POC</h1>
         <label htmlFor="drive-select" style={{ fontSize: 13, color: '#374151' }}>
-          轨迹
+          Trajectory
         </label>
         <select
           id="drive-select"
@@ -222,25 +217,25 @@ export default function App() {
         <label
           htmlFor="tunnel-select"
           style={{ fontSize: 13, color: '#374151', marginLeft: '0.25rem' }}
-          title="仿真：GNSS 拒止时长。轨迹 / 航向 / 速度均为真实 KITTI 数据，仅「拒止多久」是场景设定"
+          title="Simulation: GNSS denial duration. Trajectory / heading / speed are real KITTI data; only denial duration is a scenario parameter"
         >
-          隧道
+          Tunnel
         </label>
         <select
           id="tunnel-select"
           value={tunnelS}
           onChange={(e) => setTunnelS(Number(e.target.value))}
           style={{ padding: '0.25rem 0.5rem' }}
-          title="仿真：GNSS 拒止时长（0.3×轨迹时长处起算，超出轨迹尾部则截断）"
+          title="Simulation: GNSS denial duration (starts at 30% of trajectory length, truncated if it exceeds the end)"
         >
           {TUNNEL_OPTIONS.map((s) => (
             <option key={s} value={s}>
-              {s === 0 ? '关闭' : `${s}s`}
+              {s === 0 ? 'Off' : `${s}s`}
             </option>
           ))}
         </select>
         {data && <SourceBadge source={data.entry.source} />}
-        <div role="tablist" aria-label="查看模式" style={{ display: 'flex', gap: 4, marginLeft: '0.75rem' }}>
+        <div role="tablist" aria-label="View mode" style={{ display: 'flex', gap: 4, marginLeft: '0.75rem' }}>
           {MODES.map((m) => (
             <button
               key={m.id}
@@ -266,7 +261,7 @@ export default function App() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
           {apikey && (
             <button type="button" onClick={handleRecord} style={{ padding: '0.3rem 0.9rem', cursor: 'pointer' }}>
-              录制
+              Record
             </button>
           )}
           <button
@@ -274,7 +269,7 @@ export default function App() {
             onClick={handleClearCache}
             style={{ padding: '0.3rem 0.9rem', cursor: 'pointer' }}
           >
-            清除缓存
+            Clear Cache
           </button>
         </div>
       </header>
@@ -291,11 +286,11 @@ export default function App() {
           }}
         >
           {error ? (
-            <p style={{ color: '#dc2626', padding: '1rem' }}>加载失败: {error}</p>
+            <p style={{ color: '#dc2626', padding: '1rem' }}>Load failed: {error}</p>
           ) : loading && !data ? (
-            <p style={{ color: '#6b7280', padding: '1rem' }}>加载中…</p>
+            <p style={{ color: '#6b7280', padding: '1rem' }}>Loading…</p>
           ) : mapStatus === 'pending' ? (
-            <p style={{ color: '#6b7280', padding: '1rem' }}>正在加载 HERE 地图…</p>
+            <p style={{ color: '#6b7280', padding: '1rem' }}>Loading HERE map…</p>
           ) : data ? (
             <MapView
               trace={data.trace}
@@ -303,8 +298,9 @@ export default function App() {
               mapStatus={mapStatus === 'ok' ? 'ok' : 'fallback'}
               apikey={apikey}
               upToIndex={mode === 'demo' ? pb.index : data.trace.length - 1}
-              carIndex={mode === 'demo' ? pb.index : undefined}
-              drPath={dr?.positions}
+              carPos={mode === 'demo' ? pb.pos : undefined}
+              drPath={mode === 'analysis' ? dr?.positions : undefined}
+              showMm={mode === 'analysis'}
               gnssPath={data.gnssFeed}
               interactive={mode === 'analysis'}
             />
@@ -313,12 +309,12 @@ export default function App() {
         <aside style={{ width: 380, flexShrink: 0 }}>
           {mode === 'analysis' ? (
             <StatsPanel
-              trace={data?.trace ?? []}
+              trace={data?.liveTrace ?? []}
               derived={data?.derived ?? []}
               drMaxDriftM={drMaxDriftM}
             />
           ) : data ? (
-            <DeviationReplayChart trace={data.trace} derived={data.derived} index={pb.index} />
+            <DeviationReplayChart trace={data.liveTrace} derived={data.derived} index={pb.index} />
           ) : null}
         </aside>
       </main>
@@ -339,8 +335,8 @@ export default function App() {
         />
       )}
 
-      <footer style={{ padding: '0.5rem 1.5rem', borderTop: '1px solid #e5e7eb', fontSize: 12, color: '#6b7280' }}>
-        Data: KITTI (Geiger et al., 2013), CC BY-NC-SA · Map: HERE
+      <footer style={{ padding: '0.5rem 1.5rem', borderTop: '1px solid #e5e7eb', fontSize: 12, color: '#374151' }}>
+        <strong>Data:</strong> KITTI (Geiger et al., 2013), CC BY-NC-SA · <strong>Map:</strong> HERE
       </footer>
     </div>
   )
