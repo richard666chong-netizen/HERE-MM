@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "shot": "node scripts/capture-screenshots.mjs",
     "record": "node scripts/record-fixtures.mjs",
     "record:dr": "vite-node scripts/record-fixtures-dr.ts"
   },
@@ -23,6 +24,7 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
     "jsdom": "^26.1.0",
+    "playwright-core": "^1.63.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.0",
     "vitest": "^3.2.7"
