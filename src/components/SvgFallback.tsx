@@ -350,8 +350,6 @@ export default function SvgFallback({
              points="0,-18 13,15 0,7 -13,15"
              fill="#1d4ed8" stroke="#ffffff" strokeWidth="2.5"
            />
-           {/* DEBUG: north indicator — a small red line pointing up (SVG -y) to show where "north" is after rotation */}
-           <line x1="0" y1="-28" x2="0" y2="-22" stroke="#ef4444" strokeWidth="2" />
          </svg>
       </div>
     )}
