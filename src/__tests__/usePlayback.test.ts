@@ -98,7 +98,7 @@ describe('usePlayback pos（子帧浮点暴露）', () => {
     expect(result.current.index).toBe(1)
   })
 
-  it('seek 同步 pos；终点 pos === lastIndex；终点重播归零；lastIndex 复位归零', () => {
+  it('seek 同步 pos；终点 pos === lastIndex；终点重播归零', () => {
     const { result } = renderHook(() => usePlayback(9))
     act(() => result.current.seek(3))
     expect(result.current.pos).toBe(3)
@@ -108,5 +108,19 @@ describe('usePlayback pos（子帧浮点暴露）', () => {
     expect(result.current.pos).toBe(9)
     act(() => result.current.play()) // 终点重播
     expect(result.current.pos).toBe(0)
+  })
+
+  it('lastIndex 复位（数据就位/切轨迹）pos 归零', () => {
+    const { result, rerender } = renderHook(({ n }: { n: number }) => usePlayback(n), {
+      initialProps: { n: 9 },
+    })
+    act(() => result.current.seek(4)) // seek 经 Math.round 取整 → pos=4
+    act(() => result.current.play())
+    act(() => flushFrame(0))
+    expect(result.current.pos).toBe(4)
+    rerender({ n: 232 })
+    expect(result.current.index).toBe(0)
+    expect(result.current.pos).toBe(0)
+    expect(result.current.playing).toBe(false)
   })
 })
