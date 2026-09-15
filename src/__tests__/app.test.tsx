@@ -66,7 +66,7 @@ describe('App (Step1 编排壳)', () => {
   it('renders header: POC title + drive selector with 0093/0096', async () => {
     render(<App />)
     expect(screen.getByRole('heading', { name: 'HERE Map Matching POC' })).toBeTruthy()
-    const select = screen.getByRole('combobox', { name: '轨迹' }) as HTMLSelectElement
+    const select = screen.getByRole('combobox', { name: 'Trajectory' }) as HTMLSelectElement
     expect(select.value).toBe('2011_09_26_drive_0093') // 默认选中 0093
     expect(screen.getByRole('option', { name: /0093/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /0096/ })).toBeTruthy()
@@ -79,13 +79,17 @@ describe('App (Step1 编排壳)', () => {
     expect(await screen.findByText('MOCK')).toBeTruthy() // 异步取数完成后角标亮
 
     // StatsPanel 汇总数字 = 同一份数据经 derive/deviationStats 的精确期望值（接线正确性）
+    // Mock 模式下 DR 也运行：偏差 = DR 结果 → fixture MM
     const trace = trace0093 as unknown as TrajPoint[]
     const entry = fixture0093 as unknown as CacheEntry
-    const stats = deviationStats(derive(trace, entry.response))
+    const feed = buildGnssFeed(trace)
+    const drPos = deadReckon(feed).positions
+    const liveTrace = feed.map((p, i) => ({ ...p, lat: drPos[i][0], lng: drPos[i][1] }))
+    const stats = deviationStats(derive(liveTrace, entry.response))
     const chips: ReadonlyArray<readonly [string, number]> = [
-      ['均值', stats.meanM],
-      ['95分位', stats.p95M],
-      ['最大', stats.maxM],
+      ['Mean', stats.meanM],
+      ['P95', stats.p95M],
+      ['Max', stats.maxM],
     ]
     for (const [label, v] of chips) {
       const chip = screen.getByText(label)!.closest('[data-testid="stat-chip"]')!
@@ -103,7 +107,7 @@ describe('App (Step1 编排壳)', () => {
     const driveId = '2011_09_26_drive_0093'
     expect(localStorage.getItem(cacheKey(driveId))).not.toBeNull() // 未缓存加载后已回填
 
-    fireEvent.click(screen.getByRole('button', { name: '清除缓存' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Clear Cache' }))
     expect(localStorage.getItem(cacheKey(driveId))).toBeNull() // 点击后（重载完成前）键已消失
     // 重载当前 driveId 完成：角标复亮 + 缓存回填（同时收敛异步更新进 act）
     await screen.findByText('MOCK')
@@ -117,14 +121,14 @@ describe('App (Step1 编排壳)', () => {
     await screen.findByText('MOCK')
 
     // 默认工程分析模式：tab 选中态 + 无回放条 + StatsPanel 在
-    expect(screen.getByRole('tab', { name: '工程分析模式' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('tab', { name: 'Analysis' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.queryByRole('slider')).toBeNull()
-    expect(screen.getByText('偏差分布直方图')).toBeTruthy()
+    expect(screen.getByText('Deviation Histogram')).toBeTruthy()
 
     // 切到客户演示模式
-    fireEvent.click(screen.getByRole('tab', { name: '客户演示模式' }))
-    expect(screen.getByRole('tab', { name: '客户演示模式' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.queryByText('偏差分布直方图')).toBeNull() // 侧栏换成回放曲线
+    fireEvent.click(screen.getByRole('tab', { name: 'Demo' }))
+    expect(screen.getByRole('tab', { name: 'Demo' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByText('Deviation Histogram')).toBeNull() // 侧栏换成回放曲线
     const trace = trace0093 as unknown as TrajPoint[]
     const slider = screen.getByRole('slider') as HTMLInputElement
     expect(Number(slider.max)).toBe(trace.length - 1) // 432
@@ -134,32 +138,32 @@ describe('App (Step1 编排壳)', () => {
     expect(screen.getByTestId('car-marker')).toBeTruthy() // SVG 兜底路径车标在
 
     // 播放按钮同步翻转；倍速按钮 aria-pressed
-    fireEvent.click(screen.getByRole('button', { name: '播放' }))
-    expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }))
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '2x' }))
     expect(screen.getByRole('button', { name: '2x' }).getAttribute('aria-pressed')).toBe('true')
 
     // 播放中拖动进度条：pointerdown 即暂停（防 rAF 前推漂移）、松手自动续播；
     // 拖动后时间读数联动（期望值取自导入数据，不硬编码）
     fireEvent.pointerDown(slider)
-    expect(screen.getByRole('button', { name: '播放' })).toBeTruthy() // 已暂停
+    expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy() // 已暂停
     fireEvent.change(slider, { target: { value: '100' } })
     const t100 = trace[100].timestamp
     expect(screen.getByTestId('replay-time').textContent).toContain(`${t100.toFixed(1)}s`)
     fireEvent.pointerUp(slider)
-    expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy() // 拖动前在播放 → 续播
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy() // 拖动前在播放 → 续播
 
     // 拖到终点松手：不重启播放（停在暂停态）
     fireEvent.pointerDown(slider)
     fireEvent.change(slider, { target: { value: String(trace.length - 1) } })
     fireEvent.pointerUp(slider)
-    expect(screen.getByRole('button', { name: '播放' })).toBeTruthy() // 未续播（终点）
+    expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy() // 未续播（终点）
 
     // 切回工程分析：回放条消失并已暂停；再切回来按钮为「播放」（进度保留在终点）
-    fireEvent.click(screen.getByRole('tab', { name: '工程分析模式' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Analysis' }))
     expect(screen.queryByRole('slider')).toBeNull()
-    fireEvent.click(screen.getByRole('tab', { name: '客户演示模式' }))
-    expect(screen.getByRole('button', { name: '播放' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: 'Demo' }))
+    expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy()
     expect((screen.getByRole('slider') as HTMLInputElement).value).toBe(String(trace.length - 1))
   })
 
@@ -185,7 +189,7 @@ describe('App (Step1 编排壳)', () => {
     expect(stored.source).toBe('live')
 
     // 录制按钮：清当前缓存 → 重载（再次 live）
-    fireEvent.click(screen.getByRole('button', { name: '录制' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Record' }))
     expect(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))).toBeNull() // 重载完成前键已消失
     expect(await screen.findByText('LIVE')).toBeTruthy() // 重载后复亮
     // 重载确实发生（评审修正，防「只删缓存不重载」假绿）：键经 live 回填恢复 + live 端点共调 2 次
@@ -197,7 +201,7 @@ describe('App (Step1 编排壳)', () => {
   it('record button hidden without key (existing mock path unaffected)', async () => {
     render(<App />)
     await screen.findByText('MOCK')
-    expect(screen.queryByRole('button', { name: '录制' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Record' })).toBeNull()
   })
 
   it('live entry with undecodable polyline is evicted from cache on derive failure', async () => {
@@ -222,7 +226,7 @@ describe('App (Step1 编排壳)', () => {
       }),
     )
     render(<App />)
-    expect(await screen.findByText(/加载失败/)).toBeTruthy() // derive 对坏 polyline 抛错
+    expect(await screen.findByText(/Load failed/i)).toBeTruthy()
     expect(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))).toBeNull() // live entry 已被驱逐
   })
 
@@ -286,7 +290,7 @@ describe('App (Step1 编排壳)', () => {
     )
 
     render(<App />)
-    fireEvent.change(screen.getByRole('combobox', { name: '轨迹' }), { target: { value: '2011_09_26_drive_0096' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Trajectory' }), { target: { value: '2011_09_26_drive_0096' } })
     await screen.findByText('LIVE')
 
     const drPositions = deadReckon(buildGnssFeed(t0096)).positions
@@ -373,11 +377,11 @@ describe('App (Step1 编排壳)', () => {
     )
 
     render(<App />)
-    fireEvent.change(screen.getByRole('combobox', { name: '轨迹' }), {
+    fireEvent.change(screen.getByRole('combobox', { name: 'Trajectory' }), {
       target: { value: '2011_10_03_drive_0042' },
     })
     await screen.findByText('LIVE')
-    fireEvent.change(screen.getByRole('combobox', { name: '隧道' }), { target: { value: '60' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tunnel' }), { target: { value: '60' } })
     // 三次请求：初始 0093 → 换 0042（隧道仍关）→ 开隧道 60s（缓存按隧道时长分档 → 必然重取数）
     await waitFor(() => expect(bodies.length).toBe(3))
 
@@ -417,7 +421,7 @@ describe('App (Step1 编排壳)', () => {
 
     render(<App />)
     await screen.findByText('LIVE')
-    fireEvent.change(screen.getByRole('combobox', { name: '隧道' }), { target: { value: '60' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tunnel' }), { target: { value: '60' } })
     await waitFor(() => expect(count).toBe(2))
     const feed = buildGnssFeed(t, { tunnelDurationS: 60 })
     const dr = deadReckon(feed).positions
@@ -452,15 +456,15 @@ describe('App (Step1 编排壳)', () => {
     )
 
     render(<App />)
-    fireEvent.change(screen.getByRole('combobox', { name: '轨迹' }), {
+    fireEvent.change(screen.getByRole('combobox', { name: 'Trajectory' }), {
       target: { value: '2011_10_03_drive_0042' },
     })
     await screen.findByText('LIVE')
-    fireEvent.change(screen.getByRole('combobox', { name: '隧道' }), { target: { value: '60' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tunnel' }), { target: { value: '60' } })
     await waitFor(() => expect(count).toBe(3))
 
     // 隧道关闭时不显示该 chip（无失锁叙事就无 DR 漂移可言）
-    const chip = screen.getByText('DR 漂移').closest('[data-testid="stat-chip"]')!
+    const chip = screen.getByText('DR Drift').closest('[data-testid="stat-chip"]')!
     expect(chip.textContent).toContain('66.86 m') // 实测：横向 58.6m + 沿轨 ~8m
   })
 })

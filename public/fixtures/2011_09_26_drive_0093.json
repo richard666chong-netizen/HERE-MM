@@ -1,7 +1,7 @@
 {
   "driveId": "2011_09_26_drive_0093",
   "source": "mock",
-  "createdAt": "2026-09-09T00:00:00.000Z",
+  "createdAt": "2026-09-14T07:03:26.118Z",
   "response": {
     "notices": [
       {
@@ -12,13 +12,13 @@
     ],
     "routes": [
       {
-        "id": "9c681319-ff8b-4dcc-ad30-0406fde03c30",
+        "id": "fd1a1e06-df2c-4277-bf6d-f10e5a0ab53f",
         "sections": [
           {
-            "id": "7526b177-fdd7-4fbc-806d-f280f7cf5c96",
+            "id": "3f77b0ce-b348-45ae-8a40-e07d905cb575",
             "type": "vehicle",
             "departure": {
-              "time": "2026-09-10T12:11:34+02:00",
+              "time": "2026-09-14T09:00:39+02:00",
               "place": {
                 "type": "place",
                 "location": {
@@ -32,7 +32,7 @@
               }
             },
             "arrival": {
-              "time": "2026-09-10T12:12:17+02:00",
+              "time": "2026-09-14T09:01:21+02:00",
               "place": {
                 "type": "place",
                 "location": {
@@ -47,7 +47,7 @@
               }
             },
             "summary": {
-              "duration": 43,
+              "duration": 42,
               "length": 139,
               "baseDuration": 38
             },
@@ -57,10 +57,10 @@
             }
           },
           {
-            "id": "7ad324e5-f885-4330-a661-c5bf4c83ae59",
+            "id": "f3f8f1d4-e427-44c6-abdb-1801313bf272",
             "type": "vehicle",
             "departure": {
-              "time": "2026-09-10T12:12:17+02:00",
+              "time": "2026-09-14T09:01:21+02:00",
               "place": {
                 "type": "place",
                 "location": {
@@ -75,7 +75,7 @@
               }
             },
             "arrival": {
-              "time": "2026-09-10T12:13:12+02:00",
+              "time": "2026-09-14T09:02:16+02:00",
               "place": {
                 "type": "place",
                 "location": {
@@ -100,10 +100,10 @@
             }
           },
           {
-            "id": "604603f9-9c82-4ebf-af89-885b470825b5",
+            "id": "fa8c4b2d-41bb-42f6-8c77-d4ea79bd3823",
             "type": "vehicle",
             "departure": {
-              "time": "2026-09-10T12:13:12+02:00",
+              "time": "2026-09-14T09:02:16+02:00",
               "place": {
                 "type": "place",
                 "location": {
@@ -118,7 +118,7 @@
               }
             },
             "arrival": {
-              "time": "2026-09-10T12:13:37+02:00",
+              "time": "2026-09-14T09:02:47+02:00",
               "place": {
                 "type": "place",
                 "location": {
@@ -133,7 +133,7 @@
               }
             },
             "summary": {
-              "duration": 25,
+              "duration": 31,
               "length": 53,
               "baseDuration": 26
             },
@@ -143,10 +143,10 @@
             }
           },
           {
-            "id": "5f342b73-4869-4c4b-893c-56e655cda061",
+            "id": "a575ff5e-cf0e-4d15-98d8-62ac7dda116f",
             "type": "vehicle",
             "departure": {
-              "time": "2026-09-10T12:13:37+02:00",
+              "time": "2026-09-14T09:02:47+02:00",
               "place": {
                 "type": "place",
                 "location": {
@@ -161,7 +161,7 @@
               }
             },
             "arrival": {
-              "time": "2026-09-10T12:13:43+02:00",
+              "time": "2026-09-14T09:02:53+02:00",
               "place": {
                 "type": "place",
                 "location": {

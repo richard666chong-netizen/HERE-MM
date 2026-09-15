@@ -129,3 +129,95 @@ derived 预计算: 每轨迹点 → { matchedLatLng(点到匹配 polyline 的垂
 | ISP HTTPS 劫持影响 HERE 域名 | 无底图模式 + Mock 兜底；必要时启用 dev 用 http 降级补丁 |
 | KITTI 许可 CC BY-NC-SA | 仅面试演示用途；页脚标注出处；不用于任何商业交付 |
 | MM 匹配质量不佳（如 0011 急弯场景） | 这本身是叙事素材（GNSS 退化场景下 MM 的价值）；若 0033 质量异常则切换 2011_09_26_drive_0019 备用 |
+
+## 偏差统计指标定义
+
+### 数据流概览
+
+```
+KITTI oxts trace（WGS-84, 10Hz, 全程有坐标——失锁期为 OXTS INS 桥接值）
+  ↓ buildGnssFeed（仿真失锁：posmode==0 或隧道参数 → 冻结 GNSS 位置, 标 noFix）
+  ↓ deadReckon（本地简易 DR：heading + speed 积分, 1Hz GNSS 纠正 gain=0.3）
+  ↓ liveTrace（DR 推算结果, 始终运行——无论 mock 还是 live）
+  ↓
+  ├─ Mock: liveTrace → fixture 预录制 HERE 响应 → derive(liveTrace, fixture.response)
+  └─ Live: liveTrace → HERE /import API 实时返回 → derive(liveTrace, api.response)
+  ↓
+  derived[]: 每点 → { matchedLatLng, deviationM, headingDeg, speedMps, linkId }
+```
+
+### 指标一：横向偏差（deviationM）
+
+- **含义**：本地 DR 推算位置到 HERE MM 匹配路线的垂直距离
+- **A 端**：`liveTrace[i]`——本地 DR 推算位置（heading + speed 简化积分, 1Hz GNSS 纠正）
+- **B 端**：HERE `/import` 返回的匹配路线 polyline 上最近的投影点（垂足）
+- **计算**（`derive.ts`）：对每个 DR 点, 在 MM polyline 的所有线段上找最近投影点（`nearestOnPolyline`, `t` 参数 clamp 到 `[0,1]`）, `deviationM` = DR 点到垂足的 haversine 距离
+- **语义**：HERE MM 对本地 DR 结果的纠偏量——DR 偏离路网多远, MM 拉回了多少
+
+### 指标二：偏差均值（meanM）
+
+- **含义**：全轨迹所有点的 `deviationM` 算术平均
+- **计算**（`stats.ts:deviationStats`）：`sum(deviationM[]) / n`
+- **语义**：DR → MM 的平均纠偏量
+
+### 指标三：偏差 95 分位（p95M）
+
+- **含义**：95% 的点偏差低于此值
+- **计算**：最近秩法——`sorted[ceil(0.95 * n) - 1]`（升序排列后取第 95 百分位秩）
+- **语义**：排除最差 5% 后的偏差上界——OEM 验收常用指标
+
+### 指标四：偏差最大值（maxM）
+
+- **含义**：全轨迹最大的单点偏差
+- **计算**：`sorted[n - 1]`
+- **语义**：最坏工况下 DR 偏离路网的距离
+
+### 指标五：DR 漂移（drMaxDriftM）
+
+- **含义**：本地简易 DR 推算位置与 OXTS 输出轨迹的最大偏差
+- **A 端**：`deadReckon(gnssFeed).positions[i]`——本地 DR 推算位置
+- **B 端**：`trace[i].lat/lng`——KITTI oxts 输出（OXTS RT3000 GNSS+INS 融合解, 失锁期为内部 INS 桥接值）
+- **计算**（`App.tsx`）：`max(haversineM(dr.positions[i], [trace[i].lat, trace[i].lng]))`
+- **语义**：本地简化 DR（heading + speed 积分）与 OXTS 专业 INS（原始 IMU + Kalman 滤波）的精度差距
+- **注意**：OXTS 输出不是独立高精度真值（需 RTK 厘米级参考系统）, 而是同一套传感器的更精密融合解——此指标是"两种算法精度对比", 非严格真值验证
+
+### 指标六：偏差分布直方图
+
+- **含义**：`deviationM` 的等宽分桶分布（默认 20 bin, 值域 0..max）
+- **计算**（`stats.ts:deviationHistogram`）：半开区间 `fromM ≤ v < toM`, 末 bin 右闭
+- **语义**：偏差集中分布区间——偏左表示 DR 与路网整体贴合良好
+
+### 指标七：偏差-里程曲线
+
+- **含义**：`deviationM` 随沿轨迹累计里程的变化
+- **X 轴**：`liveTrace` 的 haversine 累计里程（km）
+- **Y 轴**：`deviationM`（m）
+- **计算**（`stats.ts:deviationVsDistance`）：沿 `liveTrace` 逐段累加 haversine 距离, 与 `derived[i].deviationM` 按下标对齐
+- **语义**：定位退化发生在路程的哪个位置——失锁段偏差陡升, 恢复后回落
+
+### 四指标汇总对比
+
+| 指标 | A 端 | B 端 | 语义 |
+|---|---|---|---|
+| 均值 / p95 / 最大 | 本地 DR 推算位置 | HERE MM 匹配路线 | MM 对 DR 的纠偏量 |
+| DR 漂移 | 本地 DR 推算位置 | OXTS 输出（含 INS 桥接） | 两种 DR 算法精度差距 |
+
+### 本地 DR 算法说明
+
+- **输入**：OXTS 输出的 `headingDeg`（yaw 弧度转罗经度）+ `speedMps`（vf 前向速度）
+- **未使用**：三轴加速度（ax/ay/az/af/al/au）和三轴角速度（wx/wy/wz/wf/wl/wu）——从数据解析阶段就未提取
+- **算法**：简化位置积分 `pos += speed × cos/sin(heading) × dt`
+- **纠正**：每 10 帧（1Hz）用 GNSS 位置拉回, `gain = 0.3`（`pos += 0.3 × (gnss - pos)`）
+- **门控**：`numsats > 6` 时才纠正（≤4 星视为失锁, 不纠正, 纯递推）
+- **与 OXTS INS 的区别**：OXTS 用原始 IMU 数据跑专业 Kalman 滤波（含误差建模、重力补偿、科氏力修正）；本地 DR 用的是 OXTS 已处理好的航向和速度做简化积分——相当于在 OXTS 的"肩膀"上做简化推算
+
+### Mock 模式与 Live 模式的偏差口径
+
+两种模式下偏差统计的口径完全一致——都基于 `derive(liveTrace, response)`：
+
+| | liveTrace 来源 | response 来源 | DR 运行 |
+|---|---|---|---|
+| **Live** | 本地 DR 推算 | HERE API 实时返回 | 是 |
+| **Mock** | 本地 DR 推算 | 仓库 fixture（用 DR 轨迹录制） | 是 |
+
+差异仅在 HERE MM 响应的来源：Live 首次走 API（之后 localStorage 缓存）, Mock 读 fixture 文件。fixture 已用 DR 增强后的轨迹重新录制, 确保两侧数据对齐。

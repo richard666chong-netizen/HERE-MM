@@ -18,7 +18,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { deadReckon, detectOutages } from '../src/lib/deadReckoning'
+import { deadReckon } from '../src/lib/deadReckoning'
 import { buildGnssFeed } from '../src/lib/gnssFeed'
 import { buildImportRequest } from '../src/lib/hereRouterClient'
 import type { CacheEntry, ImportResponse, TrajPoint } from '../src/types'
@@ -82,10 +82,6 @@ for (const driveId of drives) {
   ) as TrajPoint[]
   try {
     const feed = buildGnssFeed(trace, { tunnelDurationS: tunnelS || undefined })
-    const hasOutage = detectOutages(trace, 4).some(Boolean) || feed.some((p) => p.noFix)
-    if (!hasOutage) {
-      throw new Error('轨迹无失锁点（且隧道关闭）——此脚本只录 DR 增强路径，请用 scripts/record-fixtures.mjs')
-    }
     const staleCount = feed.filter((p, i) => p.lat !== trace[i].lat || p.lng !== trace[i].lng).length
     const drPositions = deadReckon(feed).positions
     const augmented = feed.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] }))

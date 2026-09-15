@@ -1,17 +1,17 @@
 {
   "driveId": "2011_09_26_drive_0106",
   "source": "mock",
-  "createdAt": "2026-09-10T13:46:55.607Z",
+  "createdAt": "2026-09-14T07:03:26.126Z",
   "response": {
     "routes": [
       {
-        "id": "c5ce4c54-fb19-45b9-b0c0-684e61359eb5",
+        "id": "1a2d1bdf-0ec3-40f2-86c0-050e9d8a378c",
         "sections": [
           {
-            "id": "0469b539-b1c0-4205-97cc-19f4af557558",
+            "id": "d279fe41-ab49-4cf0-a729-6515dbd50b81",
             "type": "vehicle",
             "departure": {
-              "time": "2026-09-10T15:46:54+02:00",
+              "time": "2026-09-14T09:00:41+02:00",
               "place": {
                 "type": "place",
                 "location": {
@@ -25,7 +25,7 @@
               }
             },
             "arrival": {
-              "time": "2026-09-10T15:47:27+02:00",
+              "time": "2026-09-14T09:01:20+02:00",
               "place": {
                 "type": "place",
                 "location": {
@@ -39,7 +39,7 @@
               }
             },
             "summary": {
-              "duration": 33,
+              "duration": 39,
               "length": 110,
               "baseDuration": 16
             },

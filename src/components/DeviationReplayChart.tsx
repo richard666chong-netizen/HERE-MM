@@ -39,7 +39,7 @@ const ReplayAreaChart = memo(function ReplayAreaChart({
       <Tooltip formatter={(v) => `${Number(v).toFixed(2)} m`} />
       <Area
         dataKey="deviationM"
-        name="横向偏差"
+        name="Lateral Deviation"
         stroke="#f59e0b"
         fill="#f59e0b"
         fillOpacity={0.25}
@@ -70,7 +70,7 @@ export default function DeviationReplayChart({ trace, derived, index, windowSec 
   const from = Math.max(0, tQ - win) // 计算一次，XAxis domain 与 data-from 测试钩子共用（不可分叉）
 
   if (derived.length === 0 || trace.length === 0) {
-    return <p style={{ fontSize: 13, color: '#6b7280' }}>暂无偏差数据</p>
+    return <p style={{ fontSize: 13, color: '#6b7280' }}>No deviation data</p>
   }
 
   return (
@@ -81,7 +81,7 @@ export default function DeviationReplayChart({ trace, derived, index, windowSec 
       style={{ width: '100%', padding: '0.75rem', border: '1px solid #e5e7eb', borderRadius: 8 }}
     >
       <h2 style={{ fontSize: 13, fontWeight: 600, color: '#374151', margin: '0 0 0.25rem' }}>
-        偏差 – 时间（回放联动）
+        Deviation – Time (Replay)
       </h2>
       <div data-testid="replay-deviation" style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>
         {derived[i].deviationM.toFixed(1)} m

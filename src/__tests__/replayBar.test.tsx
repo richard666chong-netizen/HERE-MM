@@ -21,7 +21,7 @@ function makeProps() {
 describe('ReplayBar', () => {
   it('renders controls: toggle button, speed group, controlled slider, time readout', () => {
     render(<ReplayBar {...makeProps()} />)
-    expect(screen.getByRole('button', { name: '播放' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy()
     const slider = screen.getByRole('slider') as HTMLInputElement
     expect(Number(slider.min)).toBe(0)
     expect(Number(slider.max)).toBe(232)
@@ -29,15 +29,15 @@ describe('ReplayBar', () => {
     expect(screen.getByTestId('replay-time').textContent).toBe('2.5s / 23.2s')
   })
 
-  it('playing flips the toggle button label to 暂停', () => {
+  it('playing flips the toggle button label to Pause', () => {
     render(<ReplayBar {...makeProps()} playing={true} />)
-    expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy()
   })
 
   it('fires onToggle / onSeek / onSpeed with plain numbers', () => {
     const props = makeProps()
     render(<ReplayBar {...props} />)
-    fireEvent.click(screen.getByRole('button', { name: '播放' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }))
     expect(props.onToggle).toHaveBeenCalledTimes(1)
     fireEvent.change(screen.getByRole('slider'), { target: { value: '120' } })
     expect(props.onSeek).toHaveBeenCalledWith(120)

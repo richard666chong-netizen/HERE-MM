@@ -12,6 +12,7 @@ export interface SvgFallbackProps {
   car?: { lat: number; lng: number; compassDeg: number }
   drPath?: Array<[number, number]>
   gnssPath?: TrajPoint[]
+  showMm?: boolean
   interactive?: boolean
 }
 
@@ -24,12 +25,13 @@ const SCALE_BAR_STEPS_M = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 2
 export default function SvgFallback({
   trace,
   derived,
-  width,
-  height,
+  width: _width,
+  height: _height,
   upToIndex,
   car,
   drPath,
   gnssPath,
+  showMm = true,
   interactive,
 }: SvgFallbackProps) {
   const [selected, setSelected] = useState<{ type: MarkerType; index: number } | null>(null)
@@ -144,7 +146,7 @@ export default function SvgFallback({
         })}
       </g>
     ) : null
-  const matchedEl = (
+  const matchedEl = showMm ? (
     <g data-testid="matched-path">
       {thinMm.map((i) => {
         const [cx, cy] = xy(derived[i].matchedLatLng as LatLng)
@@ -163,7 +165,7 @@ export default function SvgFallback({
         )
       })}
     </g>
-  )
+  ) : null
   // GNSS 散点（橙，抽稀；回放下只画已洒到的下标——filter 是每帧仅有的全量遍历）。
   // noFix 帧不画：失锁期接收机无定位解（真实或仿真隧道），画出来是一坨冻住的点，不如留白
   const gnssDots = gnssPath ?? trace
@@ -180,80 +182,88 @@ export default function SvgFallback({
           style={interactive ? { cursor: 'pointer' } : undefined}
           onClick={interactive ? (e) => { e.stopPropagation(); setSelected({ type: 'gnss', index: i }) } : undefined}
         >
-          <circle cx={cx} cy={cy} r={8} fill="none" stroke="#9ca3af" strokeWidth={2.5} />
-          <line x1={cx} y1={cy} x2={cx} y2={cy - 12} stroke="#9ca3af" strokeWidth={1.5} />
+          <circle cx={cx} cy={cy} r={6} fill="none" stroke="#9ca3af" strokeWidth={2} />
+          <line x1={cx} y1={cy} x2={cx} y2={cy - 9} stroke="#9ca3af" strokeWidth={1.2} />
         </g>
       )
     })
 
+  // 导航跟随模式：车标固定在容器中心（HTML 叠层），轨迹层 translate+rotate 跟随车辆。
+  // rotate(-compassDeg)：SVG y 轴朝下，arrow tip 在 y=-18（朝上=北）。
+  //   compassDeg=0（北）→ rotate(0) → 箭头朝上 ✓
+  //   compassDeg=90（东）→ rotate(-90) → 箭头朝右（东）✓  （SVG rotate 负=逆时针=CCW）
+  //   等价于将轨迹层逆时针旋转 compassDeg，使行驶方向指向屏幕上方
+  const [carSvgX, carSvgY] = car ? xy([car.lat, car.lng]) : [0, 0]
+  const fixX = vw / 2
+  const fixY = vh / 2
+  const worldTransform = car
+    ? `translate(${fixX - carSvgX} ${fixY - carSvgY}) rotate(${-car.compassDeg} ${carSvgX} ${carSvgY})`
+    : undefined
+
   return (
+    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
     <svg
-      width={width}
-      height={height}
+      width="100%"
+      height="100%"
       viewBox={`0 0 ${vw} ${vh}`}
-      style={{ maxWidth: '100%', height: 'auto' }}
+      preserveAspectRatio="xMidYMid meet"
+      style={{ display: 'block', width: '100%', height: '100%' }}
       role="img"
-      aria-label="无底图 SVG 轨迹渲染（GNSS 散点 + 匹配路径）"
+      aria-label="SVG trajectory render without basemap (GNSS dots + matched path)"
       onClick={interactive && selected ? () => setSelected(null) : undefined}
     >
-      {drEl ? (
-        <>
-          {dotsEl}
-          {drEl}
-          {matchedEl}
-        </>
-      ) : (
-        <>
-          {matchedEl}
-          {dotsEl}
-        </>
-      )}
-
-      {/* 起点（绿）恒显；终点（红）行进到才出现 */}
-      {trace.length > 0 && (
-        <>
-          <circle
-            data-testid="endpoint-marker"
-            cx={xy([trace[0].lat, trace[0].lng])[0]}
-            cy={xy([trace[0].lat, trace[0].lng])[1]}
-            r={4.5}
-            fill="#16a34a"
-            stroke="#ffffff"
-            strokeWidth={1}
-          >
-            <title>起点</title>
-          </circle>
-          {upTo >= trace.length - 1 && (
-            <circle
-              data-testid="endpoint-marker"
-              cx={xy([trace[trace.length - 1].lat, trace[trace.length - 1].lng])[0]}
-              cy={xy([trace[trace.length - 1].lat, trace[trace.length - 1].lng])[1]}
-              r={4.5}
-              fill="#dc2626"
-              stroke="#ffffff"
-              strokeWidth={1}
-            >
-              <title>终点</title>
-            </circle>
-          )}
-        </>
-      )}
-
-      {/* 回放车标：位置沿匹配路径，航向 = 罗盘航向（MapView 已从 IMU yaw 转换） */}
-      {car && (
-        <polygon
-          data-testid="car-marker"
-          points="0,-6 4.5,5 0,2.5 -4.5,5"
-          transform={`translate(${xy([car.lat, car.lng]).join(' ')}) rotate(${car.compassDeg})`}
-          fill="#1d4ed8"
-          stroke="#ffffff"
-          strokeWidth={1}
-        />
-      )}
+      {/* 导航跟随：有车标时轨迹层包裹在 transform <g> 中——地图随车位移+旋转，车标固定屏幕位置 */}
+      {(() => {
+        const trajectory = (
+          <>
+            {drEl ? (
+              <>
+                {dotsEl}
+                {drEl}
+                {matchedEl}
+              </>
+            ) : (
+              <>
+                {matchedEl}
+                {dotsEl}
+              </>
+            )}
+            {trace.length > 0 && (
+              <>
+                <circle
+                  data-testid="endpoint-marker"
+                  cx={xy([trace[0].lat, trace[0].lng])[0]}
+                  cy={xy([trace[0].lat, trace[0].lng])[1]}
+                  r={4.5}
+                  fill="#16a34a"
+                  stroke="#ffffff"
+                  strokeWidth={1}
+                >
+                  <title>Start</title>
+                </circle>
+                {upTo >= trace.length - 1 && (
+                  <circle
+                    data-testid="endpoint-marker"
+                    cx={xy([trace[trace.length - 1].lat, trace[trace.length - 1].lng])[0]}
+                    cy={xy([trace[trace.length - 1].lat, trace[trace.length - 1].lng])[1]}
+                    r={4.5}
+                    fill="#dc2626"
+                    stroke="#ffffff"
+                    strokeWidth={1}
+                  >
+                    <title>End</title>
+                  </circle>
+                )}
+              </>
+            )}
+          </>
+        )
+        return car ? <g transform={worldTransform}>{trajectory}</g> : trajectory
+      })()}
 
       {/* 图例 */}
       <g data-testid="legend" transform={`translate(${vw - 140}, 16)`}>
-        <rect width="130" height={drPath && drPath.length > 0 ? 100 : 76} rx="4" fill="white" fillOpacity="0.85" stroke="#d1d5db" strokeWidth="0.5" />
+        <rect width="130" height={52 + (drPath && drPath.length > 0 ? 24 : 0) + (showMm ? 24 : 0)} rx="4" fill="white" fillOpacity="0.85" stroke="#d1d5db" strokeWidth="0.5" />
         <circle cx="16" cy="22" r="6" fill="none" stroke="#9ca3af" strokeWidth={2} />
         <line x1="16" y1="22" x2="16" y2="13" stroke="#9ca3af" strokeWidth={1} />
         <text x="34" y="26" fontSize="13" fill="#374151">GNSS</text>
@@ -261,15 +271,19 @@ export default function SvgFallback({
           <>
             <polygon points="16,36 24,54 16,50 8,54" fill="#eab308" stroke="#a16207" strokeWidth={1} />
             <text x="34" y="52" fontSize="13" fill="#374151">DR</text>
-            <polygon points="16,62 24,80 16,76 8,80" fill="#2563eb" stroke="#1e40af" strokeWidth={1} />
-            <text x="34" y="78" fontSize="13" fill="#374151">MM</text>
+            {showMm ? (
+              <>
+                <polygon points="16,62 24,80 16,76 8,80" fill="#2563eb" stroke="#1e40af" strokeWidth={1} />
+                <text x="34" y="78" fontSize="13" fill="#374151">MM</text>
+              </>
+            ) : null}
           </>
-        ) : (
+        ) : showMm ? (
           <>
             <polygon points="16,36 24,54 16,50 8,54" fill="#2563eb" stroke="#1e40af" strokeWidth={1} />
             <text x="34" y="52" fontSize="13" fill="#374151">MM</text>
           </>
-        )}
+        ) : null}
       </g>
 
       {/* 比例尺 */}
@@ -298,10 +312,43 @@ export default function SvgFallback({
                 <tspan dx={8}>{value}</tspan>
               </text>
             ))}
-            <text x={12} y={ph - 8} fontSize={10} fill="#9ca3af">点击空白处关闭</text>
+            <text x={12} y={ph - 8} fontSize={10} fill="#9ca3af">Click outside to close</text>
           </g>
         )
       })()}
     </svg>
+
+    {/* 车标 HTML 叠层：固定像素大小，始终在容器中心，不受 SVG viewBox 缩放影响 */}
+    {car && (
+      <div
+        data-testid="car-marker"
+        style={{
+          position: 'absolute',
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+          pointerEvents: 'none',
+          zIndex: 10,
+          width: 0,
+          height: 0,
+        }}
+      >
+         <svg width="60" height="60" viewBox="-30 -30 60 60" style={{ position: 'absolute', left: -30, top: -30, overflow: 'visible' }}>
+           <circle
+             data-testid="car-position-circle"
+             cx="0" cy="0" r="26"
+             fill="none" stroke="#1d4ed8" strokeWidth="3" opacity="0.3"
+           />
+           {/* arrow: tip at y=-18 (up in SVG = screen up). After worldTransform rotate, this should point toward movement direction */}
+           <polygon
+             points="0,-18 13,15 0,7 -13,15"
+             fill="#1d4ed8" stroke="#ffffff" strokeWidth="2.5"
+           />
+           {/* DEBUG: north indicator — a small red line pointing up (SVG -y) to show where "north" is after rotation */}
+           <line x1="0" y1="-28" x2="0" y2="-22" stroke="#ef4444" strokeWidth="2" />
+         </svg>
+      </div>
+    )}
+    </div>
   )
 }

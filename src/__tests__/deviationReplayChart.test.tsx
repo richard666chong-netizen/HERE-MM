@@ -50,7 +50,7 @@ describe('DeviationReplayChart', () => {
   it('empty derived renders placeholder without chart', () => {
     const { container } = render(<DeviationReplayChart trace={[]} derived={[]} index={0} />)
     expect(container.querySelector('svg')).toBeNull()
-    expect(container.textContent).toContain('暂无偏差数据')
+    expect(container.textContent).toContain('No deviation data')
   })
 
   it('locks adaptive window for short traces (total < 30s → win ≈ half)', () => {

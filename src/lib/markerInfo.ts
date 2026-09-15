@@ -26,13 +26,13 @@ export function getMarkerPopup(
     return {
       title: `GNSS #${index}`,
       lines: [
-        ['经度', `${p.lng.toFixed(6)}°`],
-        ['纬度', `${p.lat.toFixed(6)}°`],
-        ['航向', `${p.headingDeg.toFixed(2)}°`],
-        ['速度', `${p.speedMps.toFixed(2)} m/s`],
+        ['Longitude', `${p.lng.toFixed(6)}°`],
+        ['Latitude', `${p.lat.toFixed(6)}°`],
+        ['Heading', `${p.headingDeg.toFixed(2)}°`],
+        ['Speed', `${p.speedMps.toFixed(2)} m/s`],
         ['FIX', `${fixStatus} (${p.numsats} sats)`],
         ['DOP', 'N/A'],
-        ['时间', `${p.timestamp.toFixed(1)}s`],
+        ['Time', `${p.timestamp.toFixed(1)}s`],
       ],
     }
   }
@@ -43,11 +43,11 @@ export function getMarkerPopup(
     return {
       title: `DR #${index}`,
       lines: [
-        ['经度', `${drPath[index][1].toFixed(6)}°`],
-        ['纬度', `${drPath[index][0].toFixed(6)}°`],
-        ['航向', t ? `${t.headingDeg.toFixed(2)}°` : 'N/A'],
-        ['速度', t ? `${t.speedMps.toFixed(2)} m/s` : 'N/A'],
-        ['时间', t ? `${t.timestamp.toFixed(1)}s` : 'N/A'],
+        ['Longitude', `${drPath[index][1].toFixed(6)}°`],
+        ['Latitude', `${drPath[index][0].toFixed(6)}°`],
+        ['Heading', t ? `${t.headingDeg.toFixed(2)}°` : 'N/A'],
+        ['Speed', t ? `${t.speedMps.toFixed(2)} m/s` : 'N/A'],
+        ['Time', t ? `${t.timestamp.toFixed(1)}s` : 'N/A'],
       ],
     }
   }
@@ -57,13 +57,13 @@ export function getMarkerPopup(
   return {
     title: `MM #${index}`,
     lines: [
-      ['经度', `${d.matchedLatLng[1].toFixed(6)}°`],
-      ['纬度', `${d.matchedLatLng[0].toFixed(6)}°`],
+      ['Longitude', `${d.matchedLatLng[1].toFixed(6)}°`],
+      ['Latitude', `${d.matchedLatLng[0].toFixed(6)}°`],
       ['Link ID', d.linkId ?? 'N/A'],
-      ['匹路状态', d.deviationM > 10 ? 'Off Road' : 'On Road'],
-      ['航向', `${d.headingDeg.toFixed(2)}°`],
-      ['偏差', `${d.deviationM.toFixed(2)} m`],
-      ['时间', trace[index] ? `${trace[index].timestamp.toFixed(1)}s` : 'N/A'],
+      ['Match Status', d.deviationM > 10 ? 'Off Road' : 'On Road'],
+      ['Heading', `${d.headingDeg.toFixed(2)}°`],
+      ['Deviation', `${d.deviationM.toFixed(2)} m`],
+      ['Time', trace[index] ? `${trace[index].timestamp.toFixed(1)}s` : 'N/A'],
     ],
   }
 }

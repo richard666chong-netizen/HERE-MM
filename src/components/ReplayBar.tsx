@@ -42,13 +42,13 @@ export default function ReplayBar({
     >
       <button
         type="button"
-        aria-label={playing ? '暂停' : '播放'}
+        aria-label={playing ? 'Pause' : 'Play'}
         onClick={onToggle}
         style={{ fontSize: 16, padding: '0.3rem 0.9rem', cursor: 'pointer' }}
       >
         {playing ? '⏸' : '▶'}
       </button>
-      <div role="group" aria-label="倍速" style={{ display: 'flex', gap: 4 }}>
+      <div role="group" aria-label="Speed" style={{ display: 'flex', gap: 4 }}>
         {SPEEDS.map((s) => (
           <button
             key={s}
@@ -70,7 +70,7 @@ export default function ReplayBar({
       </div>
       <input
         type="range"
-        aria-label="进度"
+        aria-label="Progress"
         min={0}
         max={lastIndex}
         value={index}
