@@ -346,7 +346,7 @@ export default function App() {
       )}
 
       <footer style={{ padding: '0.5rem 1.5rem', borderTop: '1px solid #e5e7eb', fontSize: 12, color: '#374151' }}>
-        <strong>Data:</strong> KITTI (Geiger et al., 2013), CC BY-NC-SA · <strong>Map:</strong> HERE
+        <strong>Data:</strong> KITTI (Geiger et al., 2013), CC BY-NC-SA · <strong>Map:</strong> HERE · <strong>By</strong> CHANG Zhen
       </footer>
     </div>
   )

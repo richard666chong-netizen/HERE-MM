@@ -112,4 +112,4 @@ docs/superpowers/    design specs & step plans (Chinese, detailed)
 
 - Data: **KITTI** (Geiger et al., 2013), CC BY-NC-SA — used here for non-commercial demonstration only.
 - Map tiles: **© HERE**.
-- Application code: the author's; no open-source license attached (interview/portfolio artifact). The KITTI-derived sample traces inherit CC BY-NC-SA.
+- Application code: **CHANG Zhen**; no open-source license attached (interview/portfolio artifact). The KITTI-derived sample traces inherit CC BY-NC-SA.
