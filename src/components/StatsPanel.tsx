@@ -1,21 +1,19 @@
-import { useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { Area, AreaChart, Bar, BarChart, Tooltip, XAxis, YAxis } from 'recharts'
 import type { DerivedPoint, TrajPoint } from '../types'
 import { deviationHistogram, deviationStats, deviationVsDistance } from '../lib/stats'
+import { DistanceDeviationSvg, HistogramSvg } from './StatsCharts'
 
 export interface StatsPanelProps {
+  /** liveTrace（与 derived 同长，偏差-里程的里程基准） */
   trace: TrajPoint[]
   derived: DerivedPoint[]
-  /** 失锁/隧道期本地 DR 推算位置与 OXTS 输出的最大偏差（米）。缺省（无 DR 层）不渲染该 chip。
-   *  与上面三个 chip 的口径不同：那三个是「本地 DR → HERE MM 匹配路线」（MM 纠偏量）,
-   *  这一个是「本地 DR → OXTS 输出」（两种 DR 算法精度差距）——演示口径即「DR 漂了 67m，MM 绑路后 X m」。
-   *  注意：OXTS 输出不是独立高精度真值, 而是同一套传感器更精密的 INS 融合解。 */
-  drMaxDriftM?: number
+  /** 逐帧 DR 漂移（本地 DR vs OXTS，App load 时一次算好）：全量态=整列最大，切片态=前缀最大。
+   *  口径与前三个 chip 不同：那三个是「本地 DR → HERE MM」（纠偏量），这个是「本地 DR → OXTS」（算法精度差距）。 */
+  driftM: number[]
+  /** 给定 = 回放切片态（chips/图表随进度 ~2Hz + Current Deviation 红字读数全速）；缺省 = 全量态 */
+  upToIndex?: number
 }
-
-const CHART_W = 340
-const CHART_H = 180
 
 const panelStyle: CSSProperties = {
   width: '100%',
@@ -108,8 +106,33 @@ function InfoChip({ chip }: { chip: ChipDef }) {
   )
 }
 
-/** 偏差统计侧栏：汇总 chips（均值/95分位/最大）+ 直方图 + 偏差-里程曲线（视图零实时计算的落点） */
-export default function StatsPanel({ trace, derived, drMaxDriftM }: StatsPanelProps) {
+/** 偏差统计统一面板（HTML renderStatsPanel 双态移植）：
+ *  upToIndex 缺省 = 全量统计（analysis）；给定 = 随回放实时切片（demo）+ Current Deviation 读数。 */
+function StatsPanelImpl({ trace, derived, driftM, upToIndex }: StatsPanelProps) {
+  // 切片右端（量化后）：chips/两图 ~2Hz 重算（DeviationReplayChart 同约定）；端点免量化（终点=全量精确）
+  const eff = useMemo(() => {
+    const last = derived.length - 1
+    if (last < 0) return -1
+    if (upToIndex === undefined || upToIndex >= last) return last
+    const i = Math.max(0, upToIndex)
+    const tQ = Math.floor(trace[i].timestamp * 2) / 2
+    let e = i
+    while (e > 0 && trace[e].timestamp > tQ) e--
+    return e
+  }, [trace, derived, upToIndex])
+
+  const slice = useMemo(() => (eff >= 0 ? derived.slice(0, eff + 1) : []), [derived, eff])
+  // deviationStats 空输入抛 Error('empty')——空态走占位分支前 hooks 必须无条件执行，故在此守卫
+  const stats = useMemo(
+    () => (slice.length > 0 ? deviationStats(slice) : { meanM: 0, p95M: 0, maxM: 0 }),
+    [slice],
+  )
+  const bins = useMemo(() => deviationHistogram(slice).bins, [slice])
+  const dist = useMemo(() => deviationVsDistance(slice, trace), [slice, trace])
+  const driftMax = useMemo(() => Math.max(0, ...driftM.slice(0, eff + 1)), [driftM, eff])
+  // 读数全速（不量化）：切片态取当前帧
+  const rawI = upToIndex === undefined ? -1 : Math.max(0, Math.min(upToIndex, derived.length - 1))
+
   if (derived.length === 0) {
     return (
       <aside style={panelStyle}>
@@ -119,41 +142,28 @@ export default function StatsPanel({ trace, derived, drMaxDriftM }: StatsPanelPr
     )
   }
 
-  const stats = deviationStats(derived)
-  const { bins } = deviationHistogram(derived)
-  const histData = bins.map((b) => ({
-    range: `${b.fromM.toFixed(1)}–${b.toM.toFixed(1)}`,
-    count: b.count,
-  }))
-  const distData = deviationVsDistance(derived, trace).map((p) => ({
-    distanceKm: p.distanceM / 1000,
-    deviationM: p.deviationM,
-  }))
-
   const chips: ChipDef[] = [
     {
-      label: 'Mean',
+      label: 'Mean Deviation',
       value: stats.meanM,
       tooltip: 'Arithmetic mean of lateral deviation across all trajectory points.\n\nA: Local DR estimated position (heading + speed simplified integration, 1Hz GNSS correction)\nB: Nearest projection point on HERE MM matched polyline\n\nCalculation: sum(deviationM[]) / n\nSemantics: Average correction by MM on DR',
     },
     {
-      label: 'P95',
+      label: 'P95 Deviation',
       value: stats.p95M,
       tooltip: '95% of points have deviation below this value.\n\nA: Local DR estimated position\nB: HERE MM matched polyline projection\n\nCalculation: Nearest rank method: sorted[ceil(0.95 * n) - 1]\nSemantics: Deviation upper bound excluding worst 5%, common OEM acceptance metric',
     },
     {
-      label: 'Max',
+      label: 'Max Deviation',
       value: stats.maxM,
       tooltip: 'Maximum single-point deviation across the trajectory.\n\nA: Local DR estimated position\nB: HERE MM matched polyline projection\n\nCalculation: sorted[n - 1]\nSemantics: Worst-case DR deviation from road network',
     },
-  ]
-  if (drMaxDriftM !== undefined) {
-    chips.push({
-      label: 'DR Drift',
-      value: drMaxDriftM,
+    {
+      label: 'DR Max Drift',
+      value: driftMax,
       tooltip: 'Maximum deviation between local DR and OXTS output.\n\nA: Local DR estimated position (heading + speed simplified integration)\nB: KITTI oxts output (OXTS RT3000 GNSS+INS fused solution, INS bridged during signal loss)\n\nCalculation: max(haversineM(DR[i], OXTS[i]))\nSemantics: Precision gap between two DR algorithms\n\nNote: OXTS output is not an independent ground truth, but a more sophisticated INS fusion from the same sensor suite',
-    })
-  }
+    },
+  ]
 
   return (
     <aside style={panelStyle}>
@@ -165,26 +175,23 @@ export default function StatsPanel({ trace, derived, drMaxDriftM }: StatsPanelPr
       </div>
 
       <h2 style={chartTitleStyle}>Deviation Histogram</h2>
-      <BarChart width={CHART_W} height={CHART_H} data={histData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-        <XAxis dataKey="range" tick={false} label={{ value: 'Lateral Deviation (m)', position: 'insideBottom', offset: -2, fontSize: 11 }} />
-        <YAxis allowDecimals={false} width={28} />
-        <Tooltip />
-        <Bar dataKey="count" name="Count" fill="#2563eb" />
-      </BarChart>
+      <HistogramSvg bins={bins} />
 
       <h2 style={chartTitleStyle}>Deviation vs. Distance</h2>
-      <AreaChart width={CHART_W} height={CHART_H} data={distData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-        <XAxis
-          dataKey="distanceKm"
-          type="number"
-          domain={['auto', 'auto']}
-          tickFormatter={(v: number) => v.toFixed(1)}
-          label={{ value: 'Distance (km)', position: 'insideBottom', offset: -2, fontSize: 11 }}
-        />
-        <YAxis width={28} />
-        <Tooltip formatter={(v) => `${Number(v).toFixed(2)} m`} />
-        <Area dataKey="deviationM" name="Lateral Deviation" stroke="#2563eb" fill="#2563eb" fillOpacity={0.2} strokeWidth={1.5} dot={false} />
-      </AreaChart>
+      <DistanceDeviationSvg points={dist} />
+
+      {rawI >= 0 && (
+        <div data-testid="current-deviation" style={{ fontSize: 15, padding: '8px 0' }}>
+          Current Deviation:{' '}
+          <strong style={{ fontSize: 20, color: '#dc2626' }}>
+            {derived[rawI].deviationM.toFixed(2)} m
+          </strong>
+        </div>
+      )}
     </aside>
   )
 }
+
+/** memo：demo 模式下 App 以 60Hz（pb.pos）重渲染，而本面板只消费 pb.index——
+ *  props 均为稳定引用/原始值，memo 把重渲压到 index 变化频率（最终审查 minor #2） */
+export default memo(StatsPanelImpl)

@@ -77,6 +77,23 @@ describe('derive (synthetic, 3-point east-west path at lat 49)', () => {
     expect(ds[0].linkId).toBe('s0') // 落在 S1
     expect(ds[1].linkId).toBe('s1') // 落在 S2
   })
+
+  it('trackArcM：运动学轨道弧长逐帧给出，起点 ≈0、静止帧不漂移', () => {
+    // 从路径原点出发匀速前进：0.00001°lng/帧 ≈ 0.73m ↔ speedMps 7.3
+    const trace = Array.from({ length: 6 }, (_, k) => tp(49, 8.4 + k * 0.00001, k)).map((p, k) => ({
+      ...p,
+      timestamp: k / 10,
+      speedMps: 7.3,
+    }))
+    const ds = derive(trace, resp([POLY_3PT]))
+    for (const d of ds) {
+      expect(Number.isFinite(d.trackArcM)).toBe(true)
+      expect(d.trackArcM).toBeGreaterThanOrEqual(0)
+    }
+    expect(ds[0].trackArcM).toBeLessThan(1)
+    for (let k = 1; k < ds.length; k++) expect(ds[k].trackArcM).toBeGreaterThanOrEqual(ds[k - 1].trackArcM!)
+    expect(ds[5].trackArcM!).toBeGreaterThan(3) // 至少推进 0.73×5≈3.7m
+  })
 })
 
 describe('derive (e2e: real fixture 0093 + real trace)', () => {

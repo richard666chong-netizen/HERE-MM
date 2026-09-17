@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { advancePlayback, interpCarPos, interpHeadingDeg, sliceWindow, sprayPlan } from '../lib/playback'
-import type { DerivedPoint, TrajPoint } from '../types'
+import type { TrajPoint } from '../types'
 
 describe('advancePlayback', () => {
   it('100ms @ 1x 10pps advances exactly one point', () => {
@@ -54,34 +54,26 @@ describe('sprayPlan', () => {
   })
 })
 
-// ── 子帧插值（HTML teaser 样式移植）：位置垂足插值 + 航向最短弧插值 ──
+// ── 子帧插值（HTML teaser 样式移植）：位置坐标插值 + 航向最短弧插值 ──
 function tp(lat: number, lng: number): TrajPoint {
   return { lat, lng, timestamp: 0, timestampUtc: '', headingDeg: 0, speedMps: 0, numsats: 6 }
-}
-function dp(i: number, lat: number, lng: number): DerivedPoint {
-  return { i, matchedLatLng: [lat, lng], deviationM: 0, headingDeg: 0, speedMps: 0, linkId: `s${i}` }
 }
 
 describe('interpCarPos', () => {
   const trace = [tp(49.0, 8.4), tp(49.001, 8.401), tp(49.002, 8.402)]
-  const derived = [dp(0, 49.01, 8.41), dp(1, 49.02, 8.42), dp(2, 49.03, 8.43)]
 
-  it('整数 pos（frac=0）= 该帧垂足——与旧 carIndex 行为逐位一致', () => {
-    expect(interpCarPos(1, trace, derived)).toEqual([49.02, 8.42])
+  it('整数 pos（frac=0）= 该帧坐标', () => {
+    expect(interpCarPos(1, trace)).toEqual([49.001, 8.401])
   })
-  it('中段 pos=0.5 → 两垂足中点', () => {
-    expect(interpCarPos(0.5, trace, derived)).toEqual([(49.01 + 49.02) / 2, (8.41 + 8.42) / 2])
+  it('中段 pos=0.5 → 两帧坐标中点', () => {
+    expect(interpCarPos(0.5, trace)).toEqual([(49.0 + 49.001) / 2, (8.4 + 8.401) / 2])
   })
   it('越界钳制：负数→首帧、超尾→末帧', () => {
-    expect(interpCarPos(-3, trace, derived)).toEqual([49.01, 8.41])
-    expect(interpCarPos(99, trace, derived)).toEqual([49.03, 8.43])
+    expect(interpCarPos(-3, trace)).toEqual([49.0, 8.4])
+    expect(interpCarPos(99, trace)).toEqual([49.002, 8.402])
   })
   it('末帧整数 pos（i0===i1）不外推', () => {
-    expect(interpCarPos(2, trace, derived)).toEqual([49.03, 8.43])
-  })
-  it('derived 缺帧回退 trace 坐标', () => {
-    const partial = [dp(0, 49.01, 8.41)]
-    expect(interpCarPos(0.5, trace, partial)).toEqual([(49.01 + 49.001) / 2, (8.41 + 8.401) / 2])
+    expect(interpCarPos(2, trace)).toEqual([49.002, 8.402])
   })
 })
 

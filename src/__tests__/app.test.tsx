@@ -7,7 +7,7 @@ import { deadReckon, detectOutages } from '../lib/deadReckoning'
 import { buildGnssFeed } from '../lib/gnssFeed'
 import { derive } from '../lib/derive'
 import { buildImportRequest } from '../lib/hereRouterClient'
-import { deviationStats } from '../lib/stats'
+import { deviationStats, driftSeries } from '../lib/stats'
 import type { CacheEntry, TrajPoint } from '../types'
 
 // 测试代码豁免静态 import public/（src 运行时路径禁止，见计划 Global Constraints）
@@ -86,10 +86,12 @@ describe('App (Step1 编排壳)', () => {
     const drPos = deadReckon(feed).positions
     const liveTrace = feed.map((p, i) => ({ ...p, lat: drPos[i][0], lng: drPos[i][1] }))
     const stats = deviationStats(derive(liveTrace, entry.response))
+    const driftMax = Math.max(0, ...driftSeries(trace, drPos))
     const chips: ReadonlyArray<readonly [string, number]> = [
-      ['Mean', stats.meanM],
-      ['P95', stats.p95M],
-      ['Max', stats.maxM],
+      ['Mean Deviation', stats.meanM],
+      ['P95 Deviation', stats.p95M],
+      ['Max Deviation', stats.maxM],
+      ['DR Max Drift', driftMax],
     ]
     for (const [label, v] of chips) {
       const chip = screen.getByText(label)!.closest('[data-testid="stat-chip"]')!
@@ -128,7 +130,8 @@ describe('App (Step1 编排壳)', () => {
     // 切到客户演示模式
     fireEvent.click(screen.getByRole('tab', { name: 'Demo' }))
     expect(screen.getByRole('tab', { name: 'Demo' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.queryByText('Deviation Histogram')).toBeNull() // 侧栏换成回放曲线
+    expect(screen.getByText('Deviation Histogram')).toBeTruthy() // 统一面板：demo 同样显示
+    expect(screen.getByTestId('current-deviation')).toBeTruthy() // 切片态红字读数在
     const trace = trace0093 as unknown as TrajPoint[]
     const slider = screen.getByRole('slider') as HTMLInputElement
     expect(Number(slider.max)).toBe(trace.length - 1) // 432
@@ -463,8 +466,8 @@ describe('App (Step1 编排壳)', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Tunnel' }), { target: { value: '60' } })
     await waitFor(() => expect(count).toBe(3))
 
-    // 隧道关闭时不显示该 chip（无失锁叙事就无 DR 漂移可言）
-    const chip = screen.getByText('DR Drift').closest('[data-testid="stat-chip"]')!
+    // DR Max Drift chip 常驻渲染（统一面板口径，不再按失锁门控）：0042+60s 隧道 → 漂移爬升至 66.86m
+    const chip = screen.getByText('DR Max Drift').closest('[data-testid="stat-chip"]')!
     expect(chip.textContent).toContain('66.86 m') // 实测：横向 58.6m + 沿轨 ~8m
   })
 })

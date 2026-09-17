@@ -48,3 +48,14 @@ export function deviationVsDistance(
   }
   return out
 }
+
+/** 逐帧 DR 漂移序列：本地 DR 推算位置 vs OXTS 输出（真值侧）的 haversine。
+ *  长度不齐按 Math.min 截断（HTML L608 口径）；切片最大值由调用侧 slice-max（实时切片语义）。 */
+export function driftSeries(trace: TrajPoint[], drPositions: [number, number][]): number[] {
+  const n = Math.min(trace.length, drPositions.length)
+  const out: number[] = []
+  for (let i = 0; i < n; i++) {
+    out.push(haversineM([trace[i].lat, trace[i].lng], drPositions[i]))
+  }
+  return out
+}

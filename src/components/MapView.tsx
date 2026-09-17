@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import SvgFallback from './SvgFallback'
-import { yawToCompassDeg, thinByTimestamp } from '../lib/geo'
-import { interpCarPos, interpHeadingDeg } from '../lib/playback'
+import { bearingDeg, yawToCompassDeg, thinByTimestamp } from '../lib/geo'
+import { interpCarPos } from '../lib/playback'
+import { pointAtArc, trackTangentBearing, type MatchedTrack } from '../lib/matchedTrack'
 import { getMarkerPopup, type MarkerType } from '../lib/markerInfo'
 import type { DerivedPoint, TrajPoint } from '../types'
 
@@ -12,8 +13,14 @@ export interface MapViewProps {
   apikey: string
   /** 回放：GNSS 散点洒到该下标（含）。缺省 = 全量（静态模式） */
   upToIndex?: number
-  /** 回放：车标浮点位置——位置取相邻垂足插值（interpCarPos），航向取 IMU yaw 最短弧插值（interpHeadingDeg）。缺省 = 无车标 */
+  /** 回放：车标浮点位置——航向取 IMU yaw 最短弧插值；位置优先走匹配轨道弧长插值（carTrack），
+ *  轨道不可用（旧缓存/响应无 section）回退相邻帧坐标插值（interpCarPos on carTrace）。缺省 = 无车标 */
   carPos?: number
+  /** 车标插值源（回退路径，缺省 = trace）。demo 传 DR 增强轨迹（liveTrace）——teaser 参照行为 */
+  carTrace?: TrajPoint[]
+  /** 匹配轨道（到访序拼装 + 断口桥）：车标绑路主路径——弧长插值（pointAtArc），
+ *  横向位置恒在轨道上（构造性绑路）。由 App 从 MM 响应构建，与 derived.trackArcM 配套 */
+  carTrack?: MatchedTrack | null
   /** DR 航位推算轨迹（缺省不渲染）。紫折线：匹配路线（蓝）之下；并计入 setLookAtData bounds 防初始视野裁剪 */
   drPath?: Array<[number, number]>
   /** 「接收机实际报的 GNSS」流（缺省 = trace）——散点从它画，`noFix` 帧不画。
@@ -43,7 +50,7 @@ interface HereMap {
   setCenter(coord: { lat: number; lng: number }): void
   setZoom(z: number): void
   getZoom(): number
-  getViewModel(): { setLookAtData(data: { bounds?: unknown; zoom?: number; tilt?: number; heading?: number; center?: { lat: number; lng: number } }): void }
+  getViewModel(): { setLookAtData(data: { bounds?: unknown; zoom?: number; tilt?: number; heading?: number; position?: unknown }): void }
   dispose(): void
 }
 
@@ -76,6 +83,7 @@ interface HereNS {
   geo: {
     LineString: new () => { pushPoint: (coord: { lat: number; lng: number }) => void; pushLatLngAlt: (lat: number, lng: number, alt?: number) => void }
     Rect: new (top: number, left: number, bottom: number, right: number) => unknown
+    Point: new (lat: number, lng: number, alt?: number) => unknown
   }
   mapevents: {
     MapEvents: new (map: HereMap) => unknown
@@ -90,29 +98,19 @@ function getHere(): HereNS | null {
 
 
 
-/** 车标图标：SVG 箭头烘焙航向（HERE 3.1 marker 无原生 rotation），5° 分桶缓存（≤72 个）。
- *  评审已实证 opts.anchor 平面对象可行（官方 3.1 文档示例即用字面量），无需兜底；
- *  运行时预案（Errata 模式）仅剩：若 marker.setGeometry/setIcon 不存在，退化为每帧 removeObject + addObject 重建车标。 */
-function carIcon(here: HereNS, cache: Map<number, unknown>, compassDeg: number, size = 56): unknown {
-  const bucket = ((Math.round(compassDeg / 5) * 5) % 360 + 360) % 360
-  const key = size === 56 ? bucket : bucket + 1000
-  let icon = cache.get(key)
-  if (!icon) {
-    const half = size / 2
-    const r = size * 0.43
-    const tip = size * 0.14
-    const base = size * 0.86
-    const left = size * 0.29
-    const right = size * 0.71
-    const svg =
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
-      `<circle cx="${half}" cy="${half}" r="${r}" fill="none" stroke="#1d4ed8" stroke-width="4" stroke-opacity="0.35"/>` +
-      `<polygon points="${half},${tip} ${left},${base} ${half},${base*0.79} ${right},${base}" fill="#1d4ed8" stroke="#ffffff" stroke-width="3" ` +
-      `transform="rotate(${bucket} ${half} ${half})"/></svg>`
-    icon = new here.map.Icon(svg, { anchor: { x: half, y: half } })
-    cache.set(key, icon)
-  }
-  return icon
+/** 车标 SVG（指北箭头，不烘焙旋转——DOM 叠层用 CSS transform 精确旋转，无 5° 分桶） */
+function carSvgString(size = 56): string {
+  const half = size / 2
+  const r = size * 0.43
+  const tip = size * 0.14
+  const base = size * 0.86
+  const left = size * 0.29
+  const right = size * 0.71
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+    `<circle cx="${half}" cy="${half}" r="${r}" fill="none" stroke="#1d4ed8" stroke-width="4" stroke-opacity="0.35"/>` +
+    `<polygon points="${half},${tip} ${left},${base} ${half},${base * 0.79} ${right},${base}" fill="#1d4ed8" stroke="#ffffff" stroke-width="3"/></svg>`
+  )
 }
 
 type IconMarkerType = 'gnss' | 'dr' | 'mm'
@@ -161,6 +159,8 @@ export default function MapView({
   apikey,
   upToIndex,
   carPos,
+  carTrace,
+  carTrack,
   drPath,
   gnssPath,
   showMm = true,
@@ -175,22 +175,32 @@ export default function MapView({
     () => thinByTimestamp(dots.map((p) => p.timestamp), 1.0, 200),
     [dots],
   )
-  /** 车标状态（子帧插值唯一计算点）：HERE effect、SVG 兜底分支、heading-up 旋转三处共用 */
+  /** 车标状态（子帧插值唯一计算点）：HERE effect、SVG 兜底分支、heading-up 旋转三处共用。
+   *  位置主路径 = 匹配轨道弧长插值（绑路，生产 MM 行为）；轨道/弧长缺失（旧缓存）回退 DR 路径坐标插值。
+   *  航向绑路（2026-09-16）：航向源与位置源同源——轨道可用取切线（trackTangentBearing），
+   *  否则取 carTrace 相邻帧位移方位。IMU headingDeg 在退化数据集（0093「真值不可信」）漂移
+   *  4→180°：北向上图标与路面相反、车头向上与轨迹差 60°（用户实测）——不再采信。 */
   const carState = useMemo(() => {
     if (carPos === undefined || trace.length === 0) return undefined
-    const last = trace.length - 1
+    const src = carTrace ?? trace
+    const last = src.length - 1
     const clamped = Math.max(0, Math.min(carPos, last))
     const i0 = Math.floor(clamped)
     const i1 = Math.min(i0 + 1, last)
     const frac = i0 === i1 ? 0 : clamped - i0
-    const [lat, lng] = interpCarPos(clamped, trace, derived)
-    return {
-      lat,
-      lng,
-      compassDeg: yawToCompassDeg(interpHeadingDeg(trace[i0].headingDeg, trace[i1].headingDeg, frac)),
-    }
-  }, [carPos, trace, derived])
-  const compassDeg = carState?.compassDeg ?? 0
+    const a0 = carTrack ? derived[i0]?.trackArcM : undefined
+    const a1 = carTrack ? derived[i1]?.trackArcM : undefined
+    const arc = carTrack && a0 !== undefined && a1 !== undefined ? a0 + (a1 - a0) * frac : null
+    const [lat, lng] =
+      arc !== null && carTrack ? pointAtArc(carTrack, arc) : interpCarPos(clamped, src)
+    const j0 = Math.max(0, i0 - 1)
+    const j1 = Math.min(i0 + 1, last)
+    const compassDeg =
+      arc !== null && carTrack
+        ? trackTangentBearing(carTrack, arc)
+        : bearingDeg([src[j0].lat, src[j0].lng], [src[j1].lat, src[j1].lng])
+    return { lat, lng, compassDeg }
+  }, [carPos, trace, carTrace, carTrack, derived])
   const [selected, setSelected] = useState<{ type: MarkerType; index: number } | null>(null)
   const interactiveRef = useRef(interactive)
   interactiveRef.current = interactive
@@ -201,9 +211,7 @@ export default function MapView({
   const objRef = useRef<Array<unknown | null>>([]) // 与 sprayedRef 平行；noFix 帧占位 null（不画但记账）
   const dotsRef = useRef<TrajPoint[] | null>(null) // 账本所属散点源（换源即重洒）
   const sprayedMapRef = useRef<HereMap | null>(null) // 账本所属地图实例（stale-map 守卫）
-  const carRef = useRef<HereMarker | null>(null)
   const endMarkerRef = useRef<HereMarker | null>(null)
-  const iconCacheRef = useRef(new Map<number, unknown>())
   const triangleIconCacheRef = useRef(new Map<string, unknown>())
 
   // 建图 + 匹配路径（全量）+ 视野适配。声明顺序保证本 effect 先于喷洒/车标 effect 运行。
@@ -222,7 +230,6 @@ export default function MapView({
     objRef.current = []
     sprayedMapRef.current = null
     dotsRef.current = dots
-    carRef.current = null
     endMarkerRef.current = null
     triangleIconCacheRef.current = new Map()
 
@@ -301,7 +308,9 @@ export default function MapView({
       if (p[1] > east) east = p[1]
     }
     if (Number.isFinite(north))
-      map.getViewModel().setLookAtData({ bounds: new here.geo.Rect(north, west, south, east) })
+      // heading=180：analysis 模式无相机跟随 effect，此处是唯一的航向写入点——
+      // 引擎定律 R=180−h 下 h=0 渲染南向上，必须在此就置真北向上（2026-09-17）
+      map.getViewModel().setLookAtData({ bounds: new here.geo.Rect(north, west, south, east), heading: 180 })
 
     return () => {
       behavior.dispose()
@@ -310,7 +319,6 @@ export default function MapView({
       sprayedRef.current = []
       objRef.current = []
       sprayedMapRef.current = null
-      carRef.current = null
       endMarkerRef.current = null
       triangleIconCacheRef.current = new Map()
     }
@@ -385,38 +393,38 @@ export default function MapView({
     }
   }, [here, upTo, trace, dots, gnssSampleIdx])
 
-  // 车标：位置沿匹配路径垂足，航向烘焙进分桶图标。
-  // volatility: true（评审 major 修正）：HERE 3.1 非易失对象的 setGeometry 走引擎 100ms debounce
-  // 路径，50 次/秒更新会步进/冻结；易失对象即时 flush（官方 draggable-marker 示例同款配置）。
+  // 车标 = 相机跟随 + 屏幕中心 DOM 叠层（不用引擎 marker）：
+  // 2026-09-15 用户实测判别——地图平移平滑而车标独抖：HERE 3.1 的 DOM marker 重定位
+  // 与相机 setCenter 走不同更新路径，逐帧双写存在相位差 → marker 相对路面抖动。
+  // 相机锁定演示中车标本就恒在屏幕中心：钉一个不随引擎走的叠层（与 SVG 兜底路径同构），
+  // 车标抖动结构性消失；路/散点照常由引擎平滑渲染。
   useEffect(() => {
     const map = mapRef.current
     if (!here || !map) return
-    if (!carState) {
-      if (carRef.current) {
-        map.removeObject(carRef.current)
-        carRef.current = null
-      }
-      return
-    }
-    if (iconCacheRef.current.size === 0) {
-      // 预热全部 72 个航向桶（评审 minor 采纳）：data-URI SVG icon 异步 LOADING，
-      // 惰性创建会在弯道换桶瞬间闪空 1–2 帧；预热后 setIcon 恒命中 READY 态
-      for (let h = 0; h < 360; h += 5) carIcon(here, iconCacheRef.current, h)
-    }
-    const coord = { lat: carState.lat, lng: carState.lng }
+    if (!carState) return
     try {
-      map.setCenter(coord)
-      map.setZoom(headingUp ? 16 : 17)
+      // 相机跟随走引擎原生 lookAt（position+heading 单管线）。heading-up 的旋转由相机航向承担：
+      // 2026-09-16 用户实测，CSS 外层旋转宿主时引擎 DOM marker/矢量标签按未旋转坐标系整像素
+      // 重定位，双路径相位差被 2.3× 缩放放大成可见抖动（GNSS 圆圈/0096 道路名）；原生航向让
+      // 瓦片、marker、标签同管线渲染，抖动结构性消失（与车标 DOM 叠层同理：不再双写引擎内外）。
+      // ⚠ 平移字段是 position（H.geo.Point）——v3.1 契约，误用 setCenter 风格 center 会被引擎
+      // 静默忽略 → 相机不平移 → 车标原地转圈（2026-09-16 实测回归，测试已断言 position）。
+      // ⚠ 引擎 heading 实测语义（2026-09-16 用户三轮行为拟合 + 2026-09-17 geoToScreen 探针
+      // 四航向×N/E/S/W 四点客观复测，双通道一致）：传 h → 内容旋转 R = 180°−h（「后视镜」
+      // 约定，与文档「相机朝向」不符）。推论：h=0 渲染**南向上**（2026-09-17 用户实测
+      // 「北向上车标与移动方向恒相反」的根因——图标指真方位而地图翻转 180°）；
+      // h=180 才是真北向上；车头向上传 (compass+180)%360 → 行驶方位转至屏幕上方。
+      // 勿再凭文档或旋转互相关推断——改此常数必须走用户目视验收。
+      // 逐帧无死区——静止期车标比特级冻结，同值调用对引擎是 no-op。
+      map.getViewModel().setLookAtData({
+        position: new here.geo.Point(carState.lat, carState.lng),
+        heading: headingUp ? (carState.compassDeg + 180) % 360 : 180,
+      })
+      // zoom 只保下限（teaser 同款语义）：演示中用户可自由放大细看；
+      // 旧 CSS scale(2.3) 已除，heading-up 视野补偿由下限承担
+      if (map.getZoom() < 17) map.setZoom(17)
     } catch {
       // 静默
-    }
-    const icon = carIcon(here, iconCacheRef.current, carState.compassDeg, 56)
-    if (!carRef.current) {
-      carRef.current = new here.map.Marker(coord, { icon, volatility: true })
-      map.addObject(carRef.current)
-    } else {
-      carRef.current.setGeometry(coord)
-      carRef.current.setIcon(icon)
     }
   }, [here, carState, headingUp])
 
@@ -441,18 +449,17 @@ export default function MapView({
   }
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      {/* 宿主恒不变换（无 CSS rotate/scale）：heading-up 旋转走引擎相机航向（见相机 effect）。
+          134% 高保留——相机中心（宿主中点）= 容器 67% 高，车标叠层锚点据此钉位 */}
       <div
         ref={hostRef}
+        data-testid="map-host"
         style={{
           position: 'absolute',
           width: '100%',
           height: '134%',
           top: 0,
           left: 0,
-          transform: headingUp
-            ? `rotate(${(360 - compassDeg) % 360}deg) scale(2.3)`
-            : 'none',
-          transformOrigin: 'center center',
         }}
       />
       {carPos !== undefined && (
@@ -467,6 +474,39 @@ export default function MapView({
         >
           {headingUp ? 'North Up' : 'Heading Up'}
         </button>
+      )}
+      {carState && (
+        <div
+          data-testid="car-marker"
+          style={{
+            position: 'absolute',
+            left: '50%',
+            // 相机中心 = 134% 高宿主 div 的中点 = 容器 67% 高度处（不是 50%！
+            // 首版钉 50% 导致图标悬浮在路面上方 ~150px——"车标脱路"实测 2026-09-15）
+            top: '67%',
+            width: 0,
+            height: 0,
+            zIndex: 20,
+            pointerEvents: 'none',
+          }}
+        >
+          <img
+            src={`data:image/svg+xml;utf8,${encodeURIComponent(carSvgString(56))}`}
+            alt=""
+            draggable={false}
+            style={{
+              position: 'absolute',
+              left: -28,
+              top: -28,
+              width: 56,
+              height: 56,
+              // north-up：icon 从北顺时针转 compassDeg；heading-up：相机已把世界转过 −compassDeg，
+              // 引擎 marker 时代的净朝向是"恒向上"，叠层直接复刻（icon 不转）
+              transform: `rotate(${headingUp ? 0 : carState.compassDeg}deg)`,
+              transformOrigin: 'center center',
+            }}
+          />
+        </div>
       )}
       <div
         data-testid="map-legend"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DerivedPoint, TrajPoint } from '../types'
-import { deviationHistogram, deviationStats, deviationVsDistance } from '../lib/stats'
+import { deviationHistogram, deviationStats, deviationVsDistance, driftSeries } from '../lib/stats'
 
 /** 构造只有 deviationM 不同的最小 DerivedPoint 序列（其余字段与本统计库无关） */
 function mkDs(deviations: number[]): DerivedPoint[] {
@@ -67,5 +67,31 @@ describe('deviationVsDistance', () => {
     expect(r[1].distanceM).toBeCloseTo(729.5, 0)
     expect(r[2].distanceM).toBeCloseTo(1459.0, 0)
     expect(r.map((p) => p.deviationM)).toEqual([1, 2, 3])
+  })
+})
+
+describe('driftSeries', () => {
+  const tr = (lats: number[]): TrajPoint[] =>
+    lats.map((lat, i) => ({
+      lat, lng: 8.4, timestamp: i, timestampUtc: '', headingDeg: 90, speedMps: 1, numsats: 8,
+    }))
+
+  it('per-frame haversine between trace and DR positions; 0 where identical', () => {
+    // 0.001° lat ≈ 111.19m（R=6371008.8，与 geo.test 同口径）
+    const s = driftSeries(tr([49, 49.001, 49.002]), [[49, 8.4], [49, 8.4], [49.002, 8.4]])
+    expect(s).toHaveLength(3)
+    expect(s[0]).toBeCloseTo(0, 6)
+    expect(s[1]).toBeCloseTo(111.19, 1)
+    expect(s[2]).toBeCloseTo(0, 6)
+  })
+
+  it('length mismatch → truncated to min length (HTML L608 口径)', () => {
+    const s = driftSeries(tr([49, 49.001, 49.002]), [[49, 8.4]])
+    expect(s).toHaveLength(1)
+    expect(s[0]).toBeCloseTo(0, 6)
+  })
+
+  it('empty inputs → []', () => {
+    expect(driftSeries([], [])).toEqual([])
   })
 })

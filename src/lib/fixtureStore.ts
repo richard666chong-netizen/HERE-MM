@@ -1,8 +1,12 @@
 import { importRoute } from './hereRouterClient'
 import type { CacheEntry, TrajPoint } from '../types'
 
+/** 缓存键版本：derive 算法变更（如车标轨道几何圆化）会使缓存里的 trackArcM
+ *  与新轨道弧长表错位——升版本强制重派生，旧键成为孤儿（清除缓存按钮可扫尾） */
+const CACHE_VERSION = 'v2'
+
 export function cacheKey(driveId: string, variant = ''): string {
-  return variant ? `here-mm-cache:${driveId}:${variant}` : `here-mm-cache:${driveId}`
+  return variant ? `here-mm-cache:${CACHE_VERSION}:${driveId}:${variant}` : `here-mm-cache:${CACHE_VERSION}:${driveId}`
 }
 
 export function readCache(driveId: string, variant = ''): CacheEntry | null {

@@ -7,9 +7,10 @@ import StatsPanel from './components/StatsPanel'
 import { usePlayback } from './hooks/usePlayback'
 import { deadReckon, detectOutages } from './lib/deadReckoning'
 import { buildGnssFeed } from './lib/gnssFeed'
-import { haversineM } from './lib/geo'
 import { derive } from './lib/derive'
+import { driftSeries } from './lib/stats'
 import { cacheKey, matchService, readCache, writeCache } from './lib/fixtureStore'
+import { buildMatchedTrack } from './lib/matchedTrack'
 import { loadHereMaps, probeBasemap } from './lib/hereLoader'
 import type { CacheEntry, DerivedPoint, TrajPoint } from './types'
 
@@ -35,6 +36,8 @@ interface DriveData {
   /** DR 增强后的轨迹（发给 HERE MM 的）；无退化时与 trace 同引用 */
   liveTrace: TrajPoint[]
   derived: DerivedPoint[]
+  /** 逐帧 DR 漂移（本地 DR vs OXTS trace）：StatsPanel 的 DR Max Drift 数据源（全量/切片共用） */
+  driftM: number[]
   entry: CacheEntry
 }
 
@@ -69,19 +72,12 @@ export default function App() {
     return hasOutage ? deadReckon(data.gnssFeed) : null
   }, [data])
 
-  // DR 漂移读数：本地简易 DR 推算位置与 OXTS 输出（含 INS 桥接）的最大偏差。
-  // 左半边（deviationM = 本地 DR → HERE MM 纠偏量）。右半边（drMaxDriftM = 本地 DR → OXTS 精度差距）。
-  // 二者对比即「DR 漂了 67m，MM 绑路后 X m」。OXTS 非独立真值，是同一套传感器更精密的融合解。
-  const drMaxDriftM = useMemo(() => {
-    if (!dr || !data) return undefined
-    let max = 0
-    for (let i = 0; i < data.trace.length; i++) {
-      max = Math.max(max, haversineM(dr.positions[i], [data.trace[i].lat, data.trace[i].lng]))
-    }
-    return max
-  }, [dr, data])
-
   const lastIndex = data && data.trace.length > 0 ? data.trace.length - 1 : 0
+  // 车标匹配轨道：MM 响应 → 到访序拼装 + 断口桥（绑路主路径；弧长来自 derived.trackArcM）
+  const carTrack = useMemo(
+    () => (data ? buildMatchedTrack(data.liveTrace, data.entry.response) : null),
+    [data],
+  )
   const pb = usePlayback(lastIndex) // 回放状态住在 App：tab 切换保留进度，换轨迹自动复位
   const scrubWasPlayingRef = useRef(false) // 拖动前是否在播放（松手据此续播）
 
@@ -123,19 +119,22 @@ export default function App() {
         const gnssFeed = buildGnssFeed(trace, { tunnelDurationS: tunnelS || undefined })
         const drPositions = deadReckon(gnssFeed).positions
         const liveTrace = gnssFeed.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] }))
+        // DR 漂移序列（StatsPanel 数据源）：drPositions 此处已算好，顺带一次 O(n)
+        const driftM = driftSeries(trace, drPositions)
         const entry = await matchService(
           driveId,
           apikey ? { apikey, trace: liveTrace } : undefined,
           variant,
         )
         if (cancelled) return
-        // 未缓存（fixture 的 derived 为空）→ 派生并回填缓存
+        // 未缓存（fixture 的 derived 为空）→ 派生并回填缓存；
+        // 旧缓存缺 trackArcM（车标轨道弧长）→ 同样重派生升级，渲染层无需感知版本
         let derived = entry.derived
-        if (derived.length === 0) {
+        if (derived.length === 0 || derived[0]?.trackArcM === undefined) {
           derived = derive(liveTrace, entry.response)
           writeCache({ ...entry, derived }, variant)
         }
-        setData({ trace, gnssFeed, liveTrace, derived, entry: { ...entry, derived } })
+        setData({ trace, gnssFeed, liveTrace, derived, driftM, entry: { ...entry, derived } })
       } catch (e) {
         // live entry 可能已写缓存但 derive 失败（如坏 polyline）——驱逐防毒化：
         // 缓存命中短路会绕过 fixture 回落，直到手动清缓存（Step3 终审 minor 采纳）
@@ -300,6 +299,8 @@ export default function App() {
               apikey={apikey}
               upToIndex={mode === 'demo' ? pb.index : data.trace.length - 1}
               carPos={mode === 'demo' ? pb.pos : undefined}
+              carTrace={data.liveTrace}
+              carTrack={carTrack}
               drPath={mode === 'analysis' ? dr?.positions : undefined}
               showMm={mode === 'analysis'}
               gnssPath={data.gnssFeed}
@@ -307,16 +308,24 @@ export default function App() {
             />
           ) : null}
         </section>
-        <aside style={{ width: 380, flexShrink: 0 }}>
-          {mode === 'analysis' ? (
+        <aside style={{ width: 380, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {mode === 'demo' && data ? (
+            <>
+              <StatsPanel
+                trace={data.liveTrace}
+                derived={data.derived}
+                driftM={data.driftM}
+                upToIndex={pb.index}
+              />
+              <DeviationReplayChart trace={data.liveTrace} derived={data.derived} index={pb.index} />
+            </>
+          ) : (
             <StatsPanel
               trace={data?.liveTrace ?? []}
               derived={data?.derived ?? []}
-              drMaxDriftM={drMaxDriftM}
+              driftM={data?.driftM ?? []}
             />
-          ) : data ? (
-            <DeviationReplayChart trace={data.liveTrace} derived={data.derived} index={pb.index} />
-          ) : null}
+          )}
         </aside>
       </main>
 

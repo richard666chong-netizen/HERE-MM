@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { haversineM, nearestOnPolyline, yawToCompassDeg } from '../lib/geo'
+import { bearingDeg, haversineM, nearestOnPolyline, yawToCompassDeg } from '../lib/geo'
 
 describe('haversineM', () => {
   it('1 degree of latitude is ~111.2km', () => {
@@ -47,5 +47,18 @@ describe('yawToCompassDeg', () => {
   })
   it('yaw 270（正西）→ 罗盘 180（>360 无需、跨零翻转）', () => {
     expect(yawToCompassDeg(270)).toBe(180)
+  })
+})
+
+// 2026-09-16 航向绑路：车标航向源换轨/位移方位——bearingDeg 是其基础纯函数
+describe('bearingDeg：两点位移方位角（从北顺时针）', () => {
+  it('正北 → 0；正东 → 90', () => {
+    expect(bearingDeg([49, 8.4], [49.001, 8.4])).toBeCloseTo(0, 6)
+    expect(bearingDeg([49, 8.4], [49, 8.401])).toBeCloseTo(90, 6)
+  })
+  it('西南精确对角（dLng·cos49 = dLat）→ 225；同点 → 0（不抛错）', () => {
+    // 等距圆柱：0.001°lat 与 0.0015242°lng(×cos49) 等米数 → 精确 45° 对角
+    expect(bearingDeg([49.001, 8.4015242], [49, 8.4])).toBeCloseTo(225, 2)
+    expect(bearingDeg([49, 8.4], [49, 8.4])).toBe(0)
   })
 })

@@ -1,5 +1,5 @@
 /** Step2 回放时钟纯函数：rAF 帧推进 + 滑窗切片（无副作用，独立可测） */
-import type { DerivedPoint, TrajPoint } from '../types'
+import type { TrajPoint } from '../types'
 
 /** 一帧推进：pos += dt × pps × speed，clamp 到 [0, lastIndex]。dt ≤ 0 不动（首帧基线防御）。 */
 export function advancePlayback(
@@ -41,22 +41,21 @@ export function sprayPlan(
   return { removeIdx, addIdx }
 }
 
-/** 子帧插值（HTML teaser 同款算法）：pos 浮点 → 相邻两帧匹配垂足线性插值。
- *  越界钳制到 [0, last]；derived[i] 缺失回退 trace[i] 坐标；i0===i1（末帧/单点）不外推。 */
-export function interpCarPos(
-  pos: number,
-  trace: readonly TrajPoint[],
-  derived: readonly DerivedPoint[],
-): [number, number] {
+/** 子帧插值（HTML teaser 同款算法）：pos 浮点 → 相邻两帧坐标线性插值。
+ *  车标走传感器路径（demo 传 DR 增强轨迹）——matched 垂足序列在 MM 碎片化输出上会逐帧闪跳
+ *  （2026-09-15 车标抖动诊断：0093 返回 4 个地理不相连 section，交叠区垂足 5–73m 摆动），
+ *  匹配绑定由蓝线与偏差统计呈现。越界钳制到 [0, last]；i0===i1（末帧/单点）不外推。 */
+export function interpCarPos(pos: number, trace: readonly TrajPoint[]): [number, number] {
   const last = trace.length - 1
   if (last < 0) return [0, 0]
   const clamped = Math.max(0, Math.min(pos, last))
   const i0 = Math.floor(clamped)
   const i1 = Math.min(i0 + 1, last)
   const frac = i0 === i1 ? 0 : clamped - i0
-  const a = derived[i0]?.matchedLatLng ?? [trace[i0].lat, trace[i0].lng]
-  const b = derived[i1]?.matchedLatLng ?? [trace[i1].lat, trace[i1].lng]
-  return [a[0] + (b[0] - a[0]) * frac, a[1] + (b[1] - a[1]) * frac]
+  return [
+    trace[i0].lat + (trace[i1].lat - trace[i0].lat) * frac,
+    trace[i0].lng + (trace[i1].lng - trace[i0].lng) * frac,
+  ]
 }
 
 /** 航向最短弧插值：±180° 环绕处理后线性过渡。不取模——由调用方 yawToCompassDeg 归一。 */

@@ -1,3 +1,4 @@
+import { memo } from 'react'
 export interface ReplayBarProps {
   index: number
   lastIndex: number
@@ -16,7 +17,7 @@ export interface ReplayBarProps {
 const SPEEDS: ReadonlyArray<1 | 2 | 5> = [1, 2, 5]
 
 /** 回放控制条（spec L48）：播放/暂停 + 倍速 1x/2x/5x + 进度拖动（拖动即暂停） + 时间读数 */
-export default function ReplayBar({
+function ReplayBar({
   index,
   lastIndex,
   tSec,
@@ -88,3 +89,6 @@ export default function ReplayBar({
     </div>
   )
 }
+
+/** App 因车标 60fps setPos 重渲染时，本组件（index 驱动，10Hz 语义）用 memo 隔离 */
+export default memo(ReplayBar)

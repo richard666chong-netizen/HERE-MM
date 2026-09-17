@@ -11,8 +11,8 @@ beforeEach(() => localStorage.clear())
 afterEach(() => vi.unstubAllGlobals())
 
 describe('cacheKey', () => {
-  it('is `here-mm-cache:{driveId}`', () => {
-    expect(cacheKey('2011_09_26_drive_0093')).toBe('here-mm-cache:2011_09_26_drive_0093')
+  it('is `here-mm-cache:{version}:{driveId}`（版本随 derive 算法升级）', () => {
+    expect(cacheKey('2011_09_26_drive_0093')).toBe('here-mm-cache:v2:2011_09_26_drive_0093')
   })
 })
 

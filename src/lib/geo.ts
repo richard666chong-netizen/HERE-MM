@@ -30,6 +30,18 @@ export function yawToCompassDeg(yawDeg: number): number {
   return ((90 - yawDeg) % 360 + 360) % 360
 }
 
+/** 两点位移方位角（从北顺时针，0..360）：等距圆柱局部平面投影。
+ *  同点（零位移）返回 0 不抛错——调用方（车标航向回退）保证相邻帧一般非零。
+ *  2026-09-16 航向绑路：车标航向源 = 轨道切线 / carTrace 位移方位，替代漂移可达 180° 的退化 IMU。 */
+export function bearingDeg(a: LatLng, b: LatLng): number {
+  const latM = 111320
+  const cosLat = Math.cos(((a[0] + b[0]) / 2) * (Math.PI / 180))
+  const x = (b[1] - a[1]) * latM * cosLat
+  const y = (b[0] - a[0]) * latM
+  if (x === 0 && y === 0) return 0
+  return ((Math.atan2(x, y) * 180) / Math.PI + 360) % 360
+}
+
 export function nearestOnPolyline(p: LatLng, path: LatLng[]): { foot: LatLng; distM: number; segIndex: number } {
   if (path.length === 0) throw new Error('empty path')
   if (path.length === 1) return { foot: [...path[0]] as LatLng, distM: haversineM(p, path[0]), segIndex: 0 }

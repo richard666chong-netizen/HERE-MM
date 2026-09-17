@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { render } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
 import MapView from '../components/MapView'
 import { derive } from '../lib/derive'
 import { toLocalM, type LatLng } from '../lib/geo'
@@ -55,8 +55,8 @@ describe('MapView fallback（SvgFallback）路径', () => {
 
 describe('MapView replay（SvgFallback 路径）', () => {
   const trace = [tp(49.0, 8.4, 0, 0), tp(49.01, 8.405, 90, 0.1), tp(49.02, 8.41, 180, 0.2)]
-  // derived 与 trace 坐标故意错开（评审修正，防假绿）：车标必须取 matchedLatLng（匹配路线）
-  // 而非 GNSS 原始点——测试数据重合时两种实现都过，错开后可判别
+  // derived 与 trace 坐标故意错开（评审修正，防假绿）：车标取 trace（传感器路径，carTrace 缺省回退），
+  // 不取 matchedLatLng——测试数据重合时两种实现都过，错开后可判别
   const derived = [dp(0, 49.001, 8.401), dp(1, 49.015, 8.406), dp(2, 49.019, 8.409)]
 
   it('upToIndex limits spray to 1 dot + start marker only; car marker present as HTML overlay', () => {
@@ -191,5 +191,106 @@ describe('MapView 散点口径（gnssPath）', () => {
       return parts[2] / parts[3]
     }
     expect(aspect([...trace, tp(49.06, 8.4)])).toBeLessThan(aspect())
+  })
+})
+
+// 2026-09-16 heading-up 抖动修复：旋转从「外层 CSS rotate(scale) 宿主 div」改为「引擎原生相机航向」。
+// 只测接线（对引擎的调用序列），不测 HERE 渲染——渲染仍归真实浏览器手动验收（文件头既有约定）。
+describe('MapView heading-up：引擎原生相机航向（mapStatus=ok，假 H）', () => {
+  interface LookAtCall {
+    heading?: number
+    /** HERE 3.1 真实契约：lookAtData 的坐标字段是 position（H.geo.Point），不是 setCenter 风格的 center */
+    position?: { lat: number; lng: number }
+    bounds?: unknown
+  }
+  function installFakeH(): LookAtCall[] {
+    const lookAt: LookAtCall[] = []
+    class FakeMap {
+      addObject(): void {}
+      removeObject(): void {}
+      setCenter(): void {}
+      setZoom(): void {}
+      getZoom(): number {
+        return 17
+      }
+      getViewModel(): { setLookAtData(data: LookAtCall): void } {
+        return { setLookAtData: (d: LookAtCall) => lookAt.push(d) }
+      }
+      dispose(): void {}
+    }
+    ;(window as unknown as { H: unknown }).H = {
+      service: { Platform: class { createDefaultLayers() { return { vector: { normal: { map: {} } } } } } },
+      Map: FakeMap,
+      mapevents: { MapEvents: class {}, Behavior: class { dispose(): void {} } },
+      map: {
+        Polyline: class {},
+        Marker: class { setGeometry(): void {} setIcon(): void {} addEventListener(): void {} },
+        Icon: class {},
+      },
+      geo: {
+        LineString: class { pushPoint(): void {} pushLatLngAlt(): void {} },
+        Rect: class {},
+        Point: class {
+          lat: number
+          lng: number
+          constructor(lat: number, lng: number) {
+            this.lat = lat
+            this.lng = lng
+          }
+        },
+      },
+    }
+    return lookAt
+  }
+  afterEach(() => {
+    delete (window as unknown as { H?: unknown }).H
+  })
+
+  it('建图期视野适配即带 heading=180：analysis 模式无相机跟随，地图须为真北向上（引擎定律 R=180−h，h=0 渲染南向上）', () => {
+    const lookAt = installFakeH()
+    const trace = [tp(49.0, 8.4, 0, 0), tp(49.0, 8.401, 0, 0.1)]
+    const derived = [dp(0, 49.0, 8.4), dp(1, 49.001, 8.4015)]
+    render(
+      <MapView trace={trace} derived={derived} mapStatus="ok" apikey="k" carTrace={trace} />,
+    )
+    // 无 carPos → 相机跟随 effect 不跑，唯一 setLookAtData = 建图期 bounds 调用
+    const boundsCall = lookAt.find((c) => c.bounds !== undefined)
+    expect(boundsCall).toBeTruthy()
+    expect(boundsCall!.heading).toBe(180)
+  })
+
+  it('Heading Up：setLookAtData 收到 heading=(compass+180)%360 且宿主无 CSS transform；切回北向上 heading=180（引擎定律 R=180−h）', () => {
+    const lookAt = installFakeH()
+    // yaw=180 → compass=270（yawToCompassDeg=(90−yaw)%360）：判别性取值——错误实现发 270、
+    // 正确应为 90；yaw=90（compass=0）是退化值（(360−0)%360=0），无法区分两种实现（假绿教训）
+    const trace = [tp(49.0, 8.4, 180, 0), tp(49.0, 8.401, 180, 0.1), tp(49.0, 8.402, 180, 0.2)]
+    const derived = [dp(0, 49.0, 8.4), dp(1, 49.001, 8.4015), dp(2, 49.002, 8.402)]
+    const { container } = render(
+      <MapView trace={trace} derived={derived} mapStatus="ok" apikey="k" carPos={1} carTrace={trace} />,
+    )
+    const host = container.querySelector('[data-testid="map-host"]') as HTMLElement | null
+    expect(host).toBeTruthy()
+
+    // 切到车头向上：heading = (compass+180)%360。实测引擎语义（2026-09-16 用户判别终验）：
+    // 传 h → 内容旋转 R=180°−h（h 方位朝屏幕下方）——与文档「相机朝向」不符，经验常数。
+    // 本测试无 carTrack → compass 走位移方位回退（frame0→2 向东=90）→ heading=270。
+    // yaw=180（IMU→270）被无视 = 航向源已换绑路/位移。
+    fireEvent.click(screen.getByRole('button', { name: 'Heading Up' }))
+    const headingCalls = lookAt.filter((c) => typeof c.heading === 'number')
+    expect(headingCalls.length).toBeGreaterThan(0)
+    const last = headingCalls[headingCalls.length - 1]
+    expect(last.heading).toBeCloseTo(270, 1)
+    // 平移字段必须是 position（v3.1 契约）：车标在 carPos=1 → interp frac=0 → trace[1] 坐标。
+    // 首版误用 setCenter 风格 center，引擎静默忽略 → 相机不平移 → 车标原地转圈（2026-09-16 实测回归）
+    expect(last.position).toMatchObject({ lat: trace[1].lat, lng: trace[1].lng })
+    expect(host!.style.transform).toBe('')
+
+    // 切回北向上：航向 = 180。引擎实测定律（2026-09-17 geoToScreen 探针 + 用户三轮行为拟合）：
+    // 内容旋转 R = 180° − h → h=0 渲染南向上（用户实测车标与移动方向恒相反的根因），
+    // h=180 才是真北向上。判别性：180 vs 0 差恰 180°。
+    fireEvent.click(screen.getByRole('button', { name: 'North Up' }))
+    const after = lookAt.filter((c) => typeof c.heading === 'number')
+    expect(after[after.length - 1].heading).toBe(180)
+    expect(after[after.length - 1].position).toMatchObject({ lat: trace[1].lat, lng: trace[1].lng })
   })
 })

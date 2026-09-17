@@ -33,6 +33,8 @@ export interface DerivedPoint {
   speedMps: number
   /** 该点投影所在 section 的 id（import API 返回的 route section id） */
   linkId: string
+  /** 车标轨道弧长（米）：运动学门控序列匹配（matchedTrack）。旧缓存无此字段 → 渲染层回退 DR 路径插值 */
+  trackArcM?: number
 }
 
 /** localStorage 与 fixture 共用 schema；key = `here-mm-cache:{driveId}` */
