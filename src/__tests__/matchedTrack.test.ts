@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assembleTrack,
+  dropStalledRevisits,
   kinematicTrackArcs,
   pointAtArc,
   trackTangentBearing,
@@ -50,6 +51,74 @@ describe('visitSequence：到访序列（含重访，持续 ≥3 帧）', () => 
   })
 })
 
+describe('dropStalledRevisits：停滞重访去伪（2026-09-17 0042-t60 乱跑根因）', () => {
+  /** 主段尾部的桩段（~511m；0042-t60 的 307m 桩段贴主段尾端 ~40m） */
+  const TAIL: TrackSection = {
+    id: 'tail',
+    pts: [
+      [49, 8.413],
+      [49, 8.416],
+      [49, 8.42],
+    ],
+  }
+  /** 按 labels 造 trace：每帧 lng = start + (i - from)×step（lat 恒 49） */
+  function traceAt(frames: { from: number; n: number; lng0: number; dLng: number }[]): TrajPoint[] {
+    const total = frames.reduce((s, f) => Math.max(s, f.from + f.n), 0)
+    const out: TrajPoint[] = []
+    for (let i = 0; i < total; i++) {
+      const f = frames.find((x) => i >= x.from && i < x.from + x.n)!
+      out.push(tp(49, f.lng0 + (i - f.from) * f.dLng, i))
+    }
+    return out
+  }
+
+  it('0042-t60 形态：主段全程 → 桩段停滞闪跳 → 主段尾微动伪重访 → 桩段真重驾 → [main, tail]', () => {
+    // 主段 8.400→8.412（~876m 全程）；桩段 10 帧原地（span 0）；主段重访漂 58m（<5%×1463=73m → 弃）；
+    // 桩段终段 8.4135→8.4195（~440m > 5%×511 → 留）
+    const trace = traceAt([
+      { from: 0, n: 31, lng0: 8.4, dLng: 0.0004 },
+      { from: 31, n: 10, lng0: 8.4165, dLng: 0 },
+      { from: 41, n: 10, lng0: 8.4165, dLng: 0.00008 },
+      { from: 51, n: 40, lng0: 8.4135, dLng: 0.00015 },
+    ])
+    const labels = [
+      ...Array(31).fill('main'),
+      ...Array(10).fill('tail'),
+      ...Array(10).fill('main'),
+      ...Array(40).fill('tail'),
+    ]
+    expect(dropStalledRevisits(trace, [MAIN, TAIL], labels)).toEqual(['main', 'tail'])
+  })
+  it('真重驾保留：重访段内跨度 > max(8m, 5%×段长) → 重复出现（0093 语义）', () => {
+    const trace = traceAt([
+      { from: 0, n: 21, lng0: 8.4, dLng: 0.0005 },
+      { from: 21, n: 10, lng0: 49.0005, dLng: 0 }, // 停在支线（SPUR 标签）
+      { from: 31, n: 20, lng0: 8.41, dLng: 0.0007 }, // 主段重驾 ~102m > 73m
+    ])
+    const labels = [...Array(21).fill('main'), ...Array(10).fill('spur'), ...Array(20).fill('main')]
+    expect(dropStalledRevisits(trace, [MAIN, SPUR], labels)).toEqual(['main', 'spur', 'main'])
+  })
+  it('0093 形态：原地停滞的重访（span 0）→ 丢弃', () => {
+    const trace = traceAt([
+      { from: 0, n: 21, lng0: 8.4, dLng: 0.0005 },
+      { from: 21, n: 5, lng0: 49.0005, dLng: 0 },
+      { from: 26, n: 10, lng0: 8.4105, dLng: 0 }, // 主段上原地不动
+    ])
+    const labels = [...Array(21).fill('main'), ...Array(5).fill('spur'), ...Array(10).fill('main')]
+    expect(dropStalledRevisits(trace, [MAIN, SPUR], labels)).toEqual(['main', 'spur'])
+  })
+  it('相邻重复合并（丢弃后产生 main,main）', () => {
+    const trace = traceAt([
+      { from: 0, n: 21, lng0: 8.4, dLng: 0.0005 },
+      { from: 21, n: 5, lng0: 49.0005, dLng: 0 },
+      { from: 26, n: 10, lng0: 8.4105, dLng: 0 },
+      { from: 36, n: 10, lng0: 49.0006, dLng: 0.0002 },
+    ])
+    const labels = [...Array(21).fill('main'), ...Array(5).fill('spur'), ...Array(10).fill('main'), ...Array(10).fill('spur')]
+    expect(dropStalledRevisits(trace, [MAIN, SPUR], labels)).toEqual(['main', 'spur'])
+  })
+})
+
 describe('assembleTrack：按到访序拼装 + 断口桥 + Chaikin 折角圆化', () => {
   it('端点保留、顶点加密（圆化）、弧长严格递增、单点折角有上限', () => {
     const track = assembleTrack([MAIN, SPUR], ['spur', 'main'])
@@ -82,6 +151,25 @@ describe('kinematicTrackArcs：运动学门控序列匹配（生产式绑路）'
     const arcs = kinematicTrackArcs(trace, track)
     for (let k = 1; k < arcs.length; k++) expect(arcs[k]).toBeGreaterThanOrEqual(arcs[k - 1])
     for (let k = 4; k < 9; k++) expect(Math.abs(arcs[k] - arcs[k - 1] - 0.73)).toBeLessThan(0.3)
+  })
+  it('DR 1Hz 锚定锯齿被观测预平滑吸收（2026-09-17 0042 t≈34s 顿挫根因）：无猛跳无长停滞', () => {
+    const track = assembleTrack([MAIN], ['main'])
+    // 25.6m/s = 2.56m/帧；DR 1Hz 锚定锯齿：9 帧走 1.56m + 每 10 帧跳 +10m（均值守恒）。
+    // 12.8m 级单帧跳变 > 5m 门 → 拒绝→重绑循环 → 弧长 ~1Hz「平滑-猛跳」（用户实测一顿一顿，
+    // 与 zoom/speed 无关、0096 8m/s 锯齿 <3m 不触发）
+    const FRAME = 0.0000351 // ≈2.56m/帧
+    const SAW = 0.000137 // ≈10m
+    const trace: TrajPoint[] = []
+    let lng = 8.402
+    for (let i = 0; i < 60; i++) {
+      lng += i % 10 === 0 && i > 0 ? SAW : (FRAME * 9) / 10
+      trace.push(tp(49, lng, i, 25.6))
+    }
+    const arcs = kinematicTrackArcs(trace, track)
+    const steps: number[] = []
+    for (let i = 13; i < 57; i++) steps.push(arcs[i] - arcs[i - 1])
+    expect(Math.max(...steps)).toBeLessThan(4.2) // 无重绑级猛跳
+    expect(Math.min(...steps)).toBeGreaterThan(1.2) // 无拒绝期长停滞
   })
 
   it('速度门：物理不可能的观测跳变被拒（coast 在预测位），观测回门内即恢复跟随', () => {

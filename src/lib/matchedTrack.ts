@@ -141,7 +141,13 @@ export function kinematicTrackArcs(trace: readonly TrajPoint[], track: MatchedTr
     const p: LatLng = [trace[i].lat, trace[i].lng]
     const dt = i > 0 ? Math.max(0, trace[i].timestamp - trace[i - 1].timestamp) : 0
     const v = Math.min(Math.max(trace[i].speedMps, 0), 40)
-    const gate = Math.max(SPEED_MARGIN * v * dt, MIN_GATE_M)
+    // DR 1Hz 锚定余量（2026-09-17，0042 t≈34s 车标一顿一顿根因）：DR 是 10Hz 预测/1Hz 锚定，
+    // 高速下 1s 积分误差累积成单帧 12.8m 级锚定跳变（0042 25.6m/s；0096 8m/s 仅 ~3m 不可见）。
+    // 跳变超窄门 → 拒绝→重绑循环 → 弧长以 ~1Hz「平滑-猛跳」推进（米级、与 zoom/倍速无关，
+    // 用户实测放大到最大仍顿）。0.5×v = 1s 锚定流积分误差当量：0096（4m<5m）与 0093
+    // （5-7.5m≈原 5m）不受影响，67m 级真实换段仍被拒绝走重绑。
+    // 注意：中值预平滑对此无效——锯齿是周期性台阶（单调斜坡），中值只延迟透传（实测证伪）。
+    const gate = Math.max(SPEED_MARGIN * v * dt, MIN_GATE_M, v * 0.5)
     const obs = nearestArc(p, track)
     if (arc < 0) {
       arc = obs // 首帧初始化
@@ -212,6 +218,64 @@ export function trackTangentBearing(track: MatchedTrack, arcM: number): number {
   return bearingDeg(p1, p2)
 }
 
+/** 点在 section polyline 上的弧长位置（米）；空/单点段守卫返回 0 */
+function arcOnSection(p: LatLng, pts: LatLng[]): number {
+  if (pts.length < 2) return 0
+  const { segIndex, foot } = nearestOnPolyline(p, pts)
+  let s = 0
+  for (let i = 0; i < segIndex; i++) s += haversineM(pts[i], pts[i + 1])
+  return s + haversineM(pts[segIndex], foot)
+}
+
+function sectionLenM(pts: LatLng[]): number {
+  let s = 0
+  for (let i = 0; i + 1 < pts.length; i++) s += haversineM(pts[i], pts[i + 1])
+  return s
+}
+
+/** 停滞重访去伪（2026-09-17，0042-t60/t120 车标乱跑根因）：
+ *  MM 响应相邻 section 地理贴近（桩段贴主段尾端 ~40m）时，隧道恢复期 DR 抖动使
+ *  逐帧投影在两段 polyline 间闪跳 → 到访序列出现伪重访 → assembleTrack 把主段
+ *  复制两遍织出 2.7× 弧长的幻影轨道，车标锚错副本（帧 0 落在弧 4488 而非 ~0）
+ *  倒行、横穿幻影断桥（实测横向 1514m，t=0.7s 起）。
+ *  判据 = 「重访游程的段内跨度」：游程首末帧投影在该 section 上的弧长差。
+ *  伪重访实测跨度 0-73m（车原地/微动，0093 五个重访 ≤15m）；真重驾 96%/295m
+ *  （0042 末段 307m 桩段的完整再行驶）。阈值 max(8m, 5%×段长) 居中隔离两侧。
+ *  跨度可忽略的重访不复制几何——其帧投影回落到已有弧段，滤波门自然吸收。 */
+export function dropStalledRevisits(
+  trace: readonly TrajPoint[],
+  sections: TrackSection[],
+  sectionPerPoint: string[],
+  sustained = 3,
+): string[] {
+  const runs: { id: string; from: number; to: number }[] = []
+  let cur: string | null = null
+  let start = 0
+  for (let i = 0; i <= sectionPerPoint.length; i++) {
+    if (sectionPerPoint[i] !== cur) {
+      if (cur !== null && i - start >= sustained) runs.push({ id: cur, from: start, to: i - 1 })
+      cur = sectionPerPoint[i]
+      start = i
+    }
+  }
+  const seen = new Set<string>()
+  const order: string[] = []
+  for (const r of runs) {
+    const sec = sections.find((s) => s.id === r.id)
+    if (!sec) continue
+    if (seen.has(r.id)) {
+      const span = Math.abs(
+        arcOnSection([trace[r.to].lat, trace[r.to].lng], sec.pts) -
+          arcOnSection([trace[r.from].lat, trace[r.from].lng], sec.pts),
+      )
+      if (span < Math.max(8, 0.05 * sectionLenM(sec.pts))) continue // 停滞伪重访：不复制几何
+    }
+    seen.add(r.id)
+    if (order[order.length - 1] !== r.id) order.push(r.id)
+  }
+  return order
+}
+
 /** 响应 + 轨迹 → 车标轨道：解码全部 section，按驾驶到访序（含重访）拼装。 */
 export function buildMatchedTrack(trace: readonly TrajPoint[], response: ImportResponse): MatchedTrack | null {
   const sections: TrackSection[] = []
@@ -234,7 +298,7 @@ export function buildMatchedTrack(trace: readonly TrajPoint[], response: ImportR
       return ''
     }
   })
-  const order = visitSequence(sectionPerPoint, 3)
+  const order = dropStalledRevisits(trace, sections, sectionPerPoint, 3)
   if (order.length === 0) return null
   return assembleTrack(sections, order)
 }
