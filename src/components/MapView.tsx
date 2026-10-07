@@ -418,6 +418,7 @@ export default function MapView({
   // ⚠ 单步调用：两步 setLookAtData（screenToGeo 偏移）会导致引擎每帧双重重定位街道标签 → 抖动。
   // 134% 宿主高：相机中心在容器 67% 处，车标叠层钉同位置——无需偏移，单步即达导航布局。
   // ⚠ 不传 zoom：传 zoom=map.getZoom() 会在用户滚轮缩放动画完成前 snap 回旧值（播放时无法缩放根因）
+  // ⚠ 不设 zoom 下限：用户播放中可自由缩小看更大范围（原 17 下限是补偿 CSS scale 移除的遗留，已不需要）
   useEffect(() => {
     const map = mapRef.current
     if (!here || !map) return
@@ -441,7 +442,6 @@ export default function MapView({
         )
         map.addObject(carMarkerRef.current)
       }
-      if (map.getZoom() < 17) map.setZoom(17)
       map.getViewModel().setLookAtData({ position: carPoint, heading }, false)
     } catch {
       // 静默
