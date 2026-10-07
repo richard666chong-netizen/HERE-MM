@@ -27,14 +27,21 @@ export function writeCache(entry: CacheEntry, variant = ''): void {
   }
 }
 
-export async function loadFixture(driveId: string): Promise<CacheEntry> {
-  try {
-    const res = await fetch(`/fixtures/${driveId}.json`)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    return (await res.json()) as CacheEntry
-  } catch {
-    throw new Error(`fixture load failed: ${driveId}`)
+export async function loadFixture(driveId: string, variant = ''): Promise<CacheEntry> {
+  const suffix = variant ? `-${variant}` : ''
+  const urls = suffix
+    ? [`/fixtures/${driveId}${suffix}.json`, `/fixtures/${driveId}.json`]
+    : [`/fixtures/${driveId}.json`]
+  for (const url of urls) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) continue
+      return (await res.json()) as CacheEntry
+    } catch {
+      // try next url
+    }
   }
+  throw new Error(`fixture load failed: ${driveId}${suffix}`)
 }
 
 export interface MatchOptions {
@@ -65,5 +72,5 @@ export async function matchService(
       /* live 失败 → 落回 fixture */
     }
   }
-  return loadFixture(driveId)
+  return loadFixture(driveId, variant)
 }

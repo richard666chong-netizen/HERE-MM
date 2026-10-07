@@ -1,0 +1,235 @@
+{
+  "driveId": "2011_10_03_drive_0042",
+  "source": "mock",
+  "createdAt": "2026-09-30T13:08:39.782Z",
+  "response": {
+    "notices": [
+      {
+        "title": "Import: Provided trace could not be matched into a continuous route.\nSome trace points weren't matched.",
+        "code": "importSplitRoute",
+        "severity": "info"
+      }
+    ],
+    "routes": [
+      {
+        "id": "5953df9b-8c6b-46c1-8d0e-4a6646504509",
+        "sections": [
+          {
+            "id": "037916a5-679f-42a1-a542-d9b14bd11d58",
+            "type": "vehicle",
+            "departure": {
+              "time": "2026-09-17T05:50:56+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0067189,
+                  "lng": 8.4893687
+                },
+                "originalLocation": {
+                  "lat": 49.0067189,
+                  "lng": 8.48937
+                }
+              }
+            },
+            "arrival": {
+              "time": "2026-09-17T05:52:26+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0164807,
+                  "lng": 8.4652806
+                },
+                "originalLocation": {
+                  "lat": 49.0171331,
+                  "lng": 8.4671455
+                },
+                "waypoint": 0
+              }
+            },
+            "summary": {
+              "duration": 90,
+              "length": 2123,
+              "baseDuration": 90
+            },
+            "polyline": "BG-nkv9Cy5kmQRC3D7B7B7BjD_EnB3DnBzFnBjNoGrsB4I3wBoLrsBwMzoBoQnpB0KvWwH3N4N3XsO7aoVnkB0UzjB41Bv8C46BroDsYnuBwWztBwHrO4X_sBkN_YoQ3hB8LnV0P7kBkX_xBkpCr4FoarlC4rB7jEkI_YoQ7uB0F7QgF3NkDvM8L_iBsO7pB-B1D",
+            "transport": {
+              "mode": "car"
+            }
+          },
+          {
+            "id": "ad371aca-7224-4bae-acdd-83b2ef423a0f",
+            "type": "vehicle",
+            "departure": {
+              "time": "2026-09-17T05:52:26+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0171328,
+                  "lng": 8.4671439
+                },
+                "originalLocation": {
+                  "lat": 49.0171331,
+                  "lng": 8.4671455
+                },
+                "waypoint": 0
+              }
+            },
+            "arrival": {
+              "time": "2026-09-17T05:52:27+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0170348,
+                  "lng": 8.4671403
+                },
+                "originalLocation": {
+                  "lat": 49.0170709,
+                  "lng": 8.46715
+                },
+                "waypoint": 1
+              }
+            },
+            "summary": {
+              "duration": 1,
+              "length": 11,
+              "baseDuration": 1
+            },
+            "polyline": "BG6y4v9Cws5kQZMjDAlCT",
+            "transport": {
+              "mode": "car"
+            }
+          },
+          {
+            "id": "7e0c5acc-3fb2-4826-a156-f8c3e3f30d47",
+            "type": "vehicle",
+            "departure": {
+              "time": "2026-09-17T05:52:27+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0170709,
+                  "lng": 8.46715
+                },
+                "originalLocation": {
+                  "lat": 49.0170709,
+                  "lng": 8.46715
+                },
+                "waypoint": 1
+              }
+            },
+            "arrival": {
+              "time": "2026-09-17T05:52:27+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0170203,
+                  "lng": 8.4671363
+                },
+                "originalLocation": {
+                  "lat": 49.0158561,
+                  "lng": 8.4671217
+                },
+                "waypoint": 2
+              }
+            },
+            "summary": {
+              "duration": 0,
+              "length": 6,
+              "baseDuration": 0
+            },
+            "polyline": "BG-u4v9C8s5kQBAjDb",
+            "transport": {
+              "mode": "car"
+            }
+          },
+          {
+            "id": "5154a2a3-c627-4b70-b3eb-fcac16ba2d9a",
+            "type": "vehicle",
+            "departure": {
+              "time": "2026-09-17T05:52:27+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.015856,
+                  "lng": 8.4671216
+                },
+                "originalLocation": {
+                  "lat": 49.0158561,
+                  "lng": 8.4671217
+                },
+                "waypoint": 2
+              }
+            },
+            "arrival": {
+              "time": "2026-09-17T05:52:27+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0158811,
+                  "lng": 8.4670464
+                },
+                "originalLocation": {
+                  "lat": 49.0157655,
+                  "lng": 8.466905
+                },
+                "waypoint": 3
+              }
+            },
+            "summary": {
+              "duration": 0,
+              "length": 6,
+              "baseDuration": 0
+            },
+            "polyline": "BGgj2v9Ckr5kQyB3E",
+            "transport": {
+              "mode": "car"
+            }
+          },
+          {
+            "id": "de804a20-7904-4176-b5bc-0948d3769059",
+            "type": "vehicle",
+            "departure": {
+              "time": "2026-09-17T05:52:27+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0157655,
+                  "lng": 8.4669049
+                },
+                "originalLocation": {
+                  "lat": 49.0157655,
+                  "lng": 8.466905
+                },
+                "waypoint": 3
+              }
+            },
+            "arrival": {
+              "time": "2026-09-17T05:53:05+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0153451,
+                  "lng": 8.46639
+                },
+                "originalLocation": {
+                  "lat": 49.0153451,
+                  "lng": 8.4663902
+                }
+              }
+            },
+            "summary": {
+              "duration": 38,
+              "length": 536,
+              "baseDuration": 34
+            },
+            "polyline": "BGq91v9Cy94kQ1E2OzPkwBjIgZ7G0PrJgP3D4DjIgFrEoB3DA3IjDrEjD3IzKvC_EjDrJ7BrOUrTwCjhBgF3wBoBvHkD_JsEjIwCjD0F_EgF7BoGT4DUgKgF0F4DmMkN",
+            "transport": {
+              "mode": "car"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "derived": []
+}

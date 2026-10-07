@@ -274,11 +274,13 @@ export default function App() {
         </div>
       </header>
 
-      <main style={{ flex: 1, display: 'flex', gap: '1rem', padding: '1rem 1.5rem', alignItems: 'stretch' }}>
+      <main style={{ flex: 1, display: 'flex', gap: '1rem', padding: '1rem 1.5rem', alignItems: 'stretch', minHeight: 0 }}>
         <section
           style={{
             flex: 1,
-            minHeight: 520,
+            minHeight: 'min(520px, 50vh)',
+            display: 'flex',
+            flexDirection: 'column',
             border: '1px solid #e5e7eb',
             borderRadius: 8,
             overflow: 'hidden',
@@ -305,10 +307,11 @@ export default function App() {
               showMm={mode === 'analysis'}
               gnssPath={data.gnssFeed}
               interactive={mode === 'analysis'}
+              playing={mode === 'demo' ? pb.playing : undefined}
             />
           ) : null}
         </section>
-        <aside style={{ width: 380, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <aside style={{ width: 'clamp(320px, 25vw, 380px)', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {mode === 'demo' && data ? (
             <>
               <StatsPanel

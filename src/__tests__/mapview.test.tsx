@@ -202,6 +202,7 @@ describe('MapView heading-up：引擎原生相机航向（mapStatus=ok，假 H�
     /** HERE 3.1 真实契约：lookAtData 的坐标字段是 position（H.geo.Point），不是 setCenter 风格的 center */
     position?: { lat: number; lng: number }
     bounds?: unknown
+    zoom?: number
   }
   function installFakeH(): LookAtCall[] {
     const lookAt: LookAtCall[] = []
@@ -215,6 +216,9 @@ describe('MapView heading-up：引擎原生相机航向（mapStatus=ok，假 H�
       }
       getViewModel(): { setLookAtData(data: LookAtCall): void } {
         return { setLookAtData: (d: LookAtCall) => lookAt.push(d) }
+      }
+      getViewPort(): { resize(): void } {
+        return { resize(): void {} }
       }
       dispose(): void {}
     }
@@ -282,7 +286,10 @@ describe('MapView heading-up：引擎原生相机航向（mapStatus=ok，假 H�
     expect(last.heading).toBeCloseTo(270, 1)
     // 平移字段必须是 position（v3.1 契约）：车标在 carPos=1 → interp frac=0 → trace[1] 坐标。
     // 首版误用 setCenter 风格 center，引擎静默忽略 → 相机不平移 → 车标原地转圈（2026-09-16 实测回归）
-    expect(last.position).toMatchObject({ lat: trace[1].lat, lng: trace[1].lng })
+    // playing 缺省=undefined（暂停态）：单步 setLookAtData position=车标坐标（无 screenToGeo 偏移）
+    const firstCarCall = headingCalls.find((c) => c.position !== undefined)
+    expect(firstCarCall).toBeTruthy()
+    expect(firstCarCall!.position).toMatchObject({ lat: trace[1].lat, lng: trace[1].lng })
     expect(host!.style.transform).toBe('')
 
     // 切回北向上：航向 = 180。引擎实测定律（2026-09-17 geoToScreen 探针 + 用户三轮行为拟合）：
@@ -291,6 +298,9 @@ describe('MapView heading-up：引擎原生相机航向（mapStatus=ok，假 H�
     fireEvent.click(screen.getByRole('button', { name: 'North Up' }))
     const after = lookAt.filter((c) => typeof c.heading === 'number')
     expect(after[after.length - 1].heading).toBe(180)
-    expect(after[after.length - 1].position).toMatchObject({ lat: trace[1].lat, lng: trace[1].lng })
+    // playing 缺省=undefined（暂停态）：单步 setLookAtData position=车标坐标
+    const firstAfterCar = after.find((c) => c.position !== undefined)
+    expect(firstAfterCar).toBeTruthy()
+    expect(firstAfterCar!.position).toMatchObject({ lat: trace[1].lat, lng: trace[1].lng })
   })
 })

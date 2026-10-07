@@ -87,7 +87,8 @@ for (const driveId of drives) {
     const augmented = feed.map((p, i) => ({ ...p, lat: drPositions[i][0], lng: drPositions[i][1] }))
 
     const resp = await importTrace(apikey, augmented)
-    const fixturePath = join(ROOT, `public/fixtures/${driveId}.json`)
+    const suffix = tunnelS ? `-t${tunnelS}` : ''
+    const fixturePath = join(ROOT, `public/fixtures/${driveId}${suffix}.json`)
     writeFileSync(
       join(ROOT, `data/fixtures/${driveId}_import_req.json`),
       JSON.stringify({ trace: buildImportRequest(augmented) }),

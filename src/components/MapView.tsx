@@ -29,6 +29,8 @@ export interface MapViewProps {
   /** 是否渲染 MM 匹配路径蓝色箭头（客户演示模式隐藏） */
   showMm?: boolean
   interactive?: boolean
+  /** 播放中=true：DOM 叠层+相机锁定跟随（车标在下 1/3）；暂停/未播=false：HERE marker+定位不锁定（用户可自由移图缩放） */
+  playing?: boolean
 }
 
 /** HERE Maps JS API 3.1 命名空间的最小结构声明——script 标签加载、无官方 npm 类型。
@@ -50,7 +52,8 @@ interface HereMap {
   setCenter(coord: { lat: number; lng: number }): void
   setZoom(z: number): void
   getZoom(): number
-  getViewModel(): { setLookAtData(data: { bounds?: unknown; zoom?: number; tilt?: number; heading?: number; position?: unknown }): void }
+  getViewModel(): { setLookAtData(data: { bounds?: unknown; zoom?: number; tilt?: number; heading?: number; position?: unknown }, animate?: boolean): void }
+  getViewPort(): { resize(): void }
   dispose(): void
 }
 
@@ -98,18 +101,19 @@ function getHere(): HereNS | null {
 
 
 
-/** 车标 SVG（指北箭头，不烘焙旋转——DOM 叠层用 CSS transform 精确旋转，无 5° 分桶） */
-function carSvgString(size = 56): string {
+/** 车标 SVG（DOM 叠层用，靠 CSS transform 精确旋转，无分桶）；rotationDeg 用于 HERE marker 图标烘焙旋转 */
+function carSvgString(size = 56, rotationDeg = 0): string {
   const half = size / 2
   const r = size * 0.43
   const tip = size * 0.14
   const base = size * 0.86
   const left = size * 0.29
   const right = size * 0.71
+  const transform = rotationDeg ? ` transform="rotate(${rotationDeg} ${half} ${half})"` : ''
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
     `<circle cx="${half}" cy="${half}" r="${r}" fill="none" stroke="#1d4ed8" stroke-width="4" stroke-opacity="0.35"/>` +
-    `<polygon points="${half},${tip} ${left},${base} ${half},${base * 0.79} ${right},${base}" fill="#1d4ed8" stroke="#ffffff" stroke-width="3"/></svg>`
+    `<polygon points="${half},${tip} ${left},${base} ${half},${base * 0.79} ${right},${base}" fill="#1d4ed8" stroke="#ffffff" stroke-width="3"${transform}/></svg>`
   )
 }
 
@@ -165,6 +169,7 @@ export default function MapView({
   gnssPath,
   showMm = true,
   interactive,
+  playing,
 }: MapViewProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [headingUp, setHeadingUp] = useState(false)
@@ -213,6 +218,7 @@ export default function MapView({
   const sprayedMapRef = useRef<HereMap | null>(null) // 账本所属地图实例（stale-map 守卫）
   const endMarkerRef = useRef<HereMarker | null>(null)
   const triangleIconCacheRef = useRef(new Map<string, unknown>())
+  const carMarkerRef = useRef<HereMarker | null>(null)
 
   // 建图 + 匹配路径（全量）+ 视野适配。声明顺序保证本 effect 先于喷洒/车标 effect 运行。
   useEffect(() => {
@@ -232,6 +238,16 @@ export default function MapView({
     dotsRef.current = dots
     endMarkerRef.current = null
     triangleIconCacheRef.current = new Map()
+
+    // ResizeObserver + window.resize：浏览器缩放 / 窗口尺寸变化时通知 SDK 重读容器尺寸
+    const onResize = () => {
+      try { map.getViewPort().resize() } catch { /* 静默 */ }
+    }
+    const resizeObs = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(onResize)
+      : null
+    resizeObs?.observe(hostRef.current)
+    window.addEventListener('resize', onResize)
 
     // DR 航位推算：polyline 连续线 + 稀疏方向箭头。HERE SDK marker >500 会 culling，
     // polyline 不受此限保证路径连续；箭头按等步长 ≤400 个做方向指示 + 点击弹窗。
@@ -313,6 +329,8 @@ export default function MapView({
       map.getViewModel().setLookAtData({ bounds: new here.geo.Rect(north, west, south, east), heading: 180 })
 
     return () => {
+      resizeObs?.disconnect()
+      window.removeEventListener('resize', onResize)
       behavior.dispose()
       map.dispose() // HERE 3.1 的正确清理入口（连同引擎资源一并释放）
       mapRef.current = null
@@ -321,6 +339,7 @@ export default function MapView({
       sprayedMapRef.current = null
       endMarkerRef.current = null
       triangleIconCacheRef.current = new Map()
+      carMarkerRef.current = null
     }
   }, [here, apikey, trace, derived, drPath, showMm])
 
@@ -393,45 +412,46 @@ export default function MapView({
     }
   }, [here, upTo, trace, dots, gnssSampleIdx])
 
-  // 车标 = 相机跟随 + 屏幕中心 DOM 叠层（不用引擎 marker）：
-  // 2026-09-15 用户实测判别——地图平移平滑而车标独抖：HERE 3.1 的 DOM marker 重定位
-  // 与相机 setCenter 走不同更新路径，逐帧双写存在相位差 → marker 相对路面抖动。
-  // 相机锁定演示中车标本就恒在屏幕中心：钉一个不随引擎走的叠层（与 SVG 兜底路径同构），
-  // 车标抖动结构性消失；路/散点照常由引擎平滑渲染。
+  // 车标 = 相机跟随 + DOM 叠层（播放中）/ HERE marker（暂停）。
+  // 播放中：DOM 叠层在 67%（134% 高宿主 div 的中点 = 容器 67%），单步 setLookAtData 定位。
+  // 暂停/未播：HERE marker 在真实地理位置，单步 setLookAtData 定位到车标，用户可自由移图缩放。
+  // ⚠ 单步调用：两步 setLookAtData（screenToGeo 偏移）会导致引擎每帧双重重定位街道标签 → 抖动。
+  // 134% 宿主高：相机中心在容器 67% 处，车标叠层钉同位置——无需偏移，单步即达导航布局。
+  // ⚠ 不传 zoom：传 zoom=map.getZoom() 会在用户滚轮缩放动画完成前 snap 回旧值（播放时无法缩放根因）
   useEffect(() => {
     const map = mapRef.current
     if (!here || !map) return
     if (!carState) return
+    const heading = headingUp ? (carState.compassDeg + 180) % 360 : 180
+    const carPoint = new here.geo.Point(carState.lat, carState.lng)
     try {
-      // 相机跟随走引擎原生 lookAt（position+heading 单管线）。heading-up 的旋转由相机航向承担：
-      // 2026-09-16 用户实测，CSS 外层旋转宿主时引擎 DOM marker/矢量标签按未旋转坐标系整像素
-      // 重定位，双路径相位差被 2.3× 缩放放大成可见抖动（GNSS 圆圈/0096 道路名）；原生航向让
-      // 瓦片、marker、标签同管线渲染，抖动结构性消失（与车标 DOM 叠层同理：不再双写引擎内外）。
-      // ⚠ 平移字段是 position（H.geo.Point）——v3.1 契约，误用 setCenter 风格 center 会被引擎
-      // 静默忽略 → 相机不平移 → 车标原地转圈（2026-09-16 实测回归，测试已断言 position）。
-      // ⚠ 引擎 heading 实测语义（2026-09-16 用户三轮行为拟合 + 2026-09-17 geoToScreen 探针
-      // 四航向×N/E/S/W 四点客观复测，双通道一致）：传 h → 内容旋转 R = 180°−h（「后视镜」
-      // 约定，与文档「相机朝向」不符）。推论：h=0 渲染**南向上**（2026-09-17 用户实测
-      // 「北向上车标与移动方向恒相反」的根因——图标指真方位而地图翻转 180°）；
-      // h=180 才是真北向上；车头向上传 (compass+180)%360 → 行驶方位转至屏幕上方。
-      // 勿再凭文档或旋转互相关推断——改此常数必须走用户目视验收。
-      // 逐帧无死区——静止期车标比特级冻结，同值调用对引擎是 no-op。
-      map.getViewModel().setLookAtData({
-        position: new here.geo.Point(carState.lat, carState.lng),
-        heading: headingUp ? (carState.compassDeg + 180) % 360 : 180,
-      })
-      // zoom 只保下限（teaser 同款语义）：演示中用户可自由放大细看；
-      // 旧 CSS scale(2.3) 已除，heading-up 视野补偿由下限承担
+      if (playing) {
+        if (carMarkerRef.current) {
+          map.removeObject(carMarkerRef.current)
+          carMarkerRef.current = null
+        }
+      } else {
+        if (carMarkerRef.current) {
+          map.removeObject(carMarkerRef.current)
+        }
+        const rotation = headingUp ? 0 : carState.compassDeg
+        carMarkerRef.current = new here.map.Marker(
+          { lat: carState.lat, lng: carState.lng },
+          { icon: new here.map.Icon(carSvgString(56, rotation), { anchor: { x: 28, y: 28 } }) },
+        )
+        map.addObject(carMarkerRef.current)
+      }
       if (map.getZoom() < 17) map.setZoom(17)
+      map.getViewModel().setLookAtData({ position: carPoint, heading }, false)
     } catch {
       // 静默
     }
-  }, [here, carState, headingUp])
+  }, [here, carState, headingUp, playing])
 
   if (!here) {
     const car = carState
     return (
-      <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 0 }}>
         <SvgFallback
           trace={trace}
           derived={derived}
@@ -448,9 +468,7 @@ export default function MapView({
     )
   }
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
-      {/* 宿主恒不变换（无 CSS rotate/scale）：heading-up 旋转走引擎相机航向（见相机 effect）。
-          134% 高保留——相机中心（宿主中点）= 容器 67% 高，车标叠层锚点据此钉位 */}
+    <div style={{ position: 'relative', width: '100%', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       <div
         ref={hostRef}
         data-testid="map-host"
@@ -462,27 +480,12 @@ export default function MapView({
           left: 0,
         }}
       />
-      {carPos !== undefined && (
-        <button
-          type="button"
-          onClick={() => setHeadingUp((v) => !v)}
-          style={{
-            position: 'absolute', top: 12, left: 12, zIndex: 10,
-            padding: '0.35rem 0.8rem', fontSize: 13, cursor: 'pointer',
-            borderRadius: 6, border: '1px solid #d1d5db', background: 'rgba(255,255,255,0.95)',
-          }}
-        >
-          {headingUp ? 'North Up' : 'Heading Up'}
-        </button>
-      )}
-      {carState && (
+      {carState && playing && (
         <div
           data-testid="car-marker"
           style={{
             position: 'absolute',
             left: '50%',
-            // 相机中心 = 134% 高宿主 div 的中点 = 容器 67% 高度处（不是 50%！
-            // 首版钉 50% 导致图标悬浮在路面上方 ~150px——"车标脱路"实测 2026-09-15）
             top: '67%',
             width: 0,
             height: 0,
@@ -500,13 +503,24 @@ export default function MapView({
               top: -28,
               width: 56,
               height: 56,
-              // north-up：icon 从北顺时针转 compassDeg；heading-up：相机已把世界转过 −compassDeg，
-              // 引擎 marker 时代的净朝向是"恒向上"，叠层直接复刻（icon 不转）
               transform: `rotate(${headingUp ? 0 : carState.compassDeg}deg)`,
               transformOrigin: 'center center',
             }}
           />
         </div>
+      )}
+      {carPos !== undefined && (
+        <button
+          type="button"
+          onClick={() => setHeadingUp((v) => !v)}
+          style={{
+            position: 'absolute', top: 12, left: 12, zIndex: 10,
+            padding: '0.35rem 0.8rem', fontSize: 13, cursor: 'pointer',
+            borderRadius: 6, border: '1px solid #d1d5db', background: 'rgba(255,255,255,0.95)',
+          }}
+        >
+          {headingUp ? 'North Up' : 'Heading Up'}
+        </button>
       )}
       <div
         data-testid="map-legend"

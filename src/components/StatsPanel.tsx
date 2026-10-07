@@ -20,6 +20,9 @@ const panelStyle: CSSProperties = {
   padding: '0.75rem',
   border: '1px solid #e5e7eb',
   borderRadius: 8,
+  flex: 1,
+  minHeight: 0,
+  overflow: 'auto',
 }
 const chipStyle: CSSProperties = {
   position: 'relative',

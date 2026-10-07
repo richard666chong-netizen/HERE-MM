@@ -41,7 +41,35 @@ describe('loadFixture', () => {
     expect(entry.response.routes[0].sections).toBeDefined()
     expect(fetchMock).toHaveBeenCalledWith('/fixtures/2011_09_26_drive_0093.json')
   })
-  it('non-200 throws `fixture load failed: <driveId>`', async () => {
+  it('variant fetches /fixtures/<driveId>-<variant>.json first', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...entry0093, driveId: '2011_10_03_drive_0042' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    await loadFixture('2011_10_03_drive_0042', 't60')
+    expect(fetchMock).toHaveBeenCalledWith('/fixtures/2011_10_03_drive_0042-t60.json')
+  })
+  it('variant falls back to base fixture when variant file not found', async () => {
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        calls.push(url)
+        if (url.includes('-t30')) return { ok: false, status: 404, json: async () => ({}) }
+        return { ok: true, status: 200, json: async () => entry0093 }
+      }),
+    )
+    const entry = await loadFixture('2011_09_26_drive_0093', 't30')
+    expect(entry.response.routes[0].sections).toBeDefined()
+    expect(calls).toEqual(['/fixtures/2011_09_26_drive_0093-t30.json', '/fixtures/2011_09_26_drive_0093.json'])
+  })
+  it('all urls fail throws `fixture load failed: <driveId>-<variant>`', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })))
+    await expect(loadFixture('missing_drive', 't60')).rejects.toThrow('fixture load failed: missing_drive-t60')
+  })
+  it('no variant: single url failure throws `fixture load failed: <driveId>`', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })))
     await expect(loadFixture('missing_drive')).rejects.toThrow('fixture load failed: missing_drive')
   })
