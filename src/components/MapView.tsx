@@ -308,7 +308,7 @@ export default function MapView({
     }
 
     // 视野适配：H.geo.Rect 构造参数顺序 = (top, left, bottom, right)，即 (north, west, south, east)。
-    // drPath 点一并纳入（评审 minor 修正）：0093 尾段纯递推分离可达 26m 级，不纳入则紫线被初始视野裁剪
+    // 所有图层点一并纳入（trace + derived + drPath + gnssPath + carTrack）：任一图层有远点不纳入则被初始视野裁剪
     let north = -Infinity
     let south = Infinity
     let west = Infinity
@@ -317,16 +317,26 @@ export default function MapView({
       ...trace.map((t) => [t.lat, t.lng] as [number, number]),
       ...derived.map((d) => [d.matchedLatLng[0], d.matchedLatLng[1]] as [number, number]),
       ...(drPath ?? []),
+      ...(gnssPath?.map((g) => [g.lat, g.lng] as [number, number]) ?? []),
+      ...(carTrace?.map((c) => [c.lat, c.lng] as [number, number]) ?? []),
+      ...(carTrack?.path?.map((pos) => [pos[0], pos[1]] as [number, number]) ?? []),
     ]) {
       if (p[0] > north) north = p[0]
       if (p[0] < south) south = p[0]
       if (p[1] < west) west = p[1]
       if (p[1] > east) east = p[1]
     }
-    if (Number.isFinite(north))
+    if (Number.isFinite(north)) {
+      // 四周留 8% 余量：起终点/DR 点贴边时不被裁剪
+      const dLat = (north - south) * 0.08 || 0.001
+      const dLng = (east - west) * 0.08 || 0.001
       // heading=180：analysis 模式无相机跟随 effect，此处是唯一的航向写入点——
       // 引擎定律 R=180−h 下 h=0 渲染南向上，必须在此就置真北向上（2026-09-17）
-      map.getViewModel().setLookAtData({ bounds: new here.geo.Rect(north, west, south, east), heading: 180 })
+      map.getViewModel().setLookAtData({
+        bounds: new here.geo.Rect(north + dLat, west - dLng, south - dLat, east + dLng),
+        heading: 180,
+      })
+    }
 
     return () => {
       resizeObs?.disconnect()
@@ -475,7 +485,7 @@ export default function MapView({
         style={{
           position: 'absolute',
           width: '100%',
-          height: '134%',
+          height: carPos !== undefined ? '134%' : '100%',
           top: 0,
           left: 0,
         }}
