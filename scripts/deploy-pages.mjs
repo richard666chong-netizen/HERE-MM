@@ -3,8 +3,9 @@
 import { execSync } from 'node:child_process'
 import { rmSync, cpSync, readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const WT = join(ROOT, '.gh-pages-worktree')
 const noPush = process.argv.includes('--no-push')
 
@@ -13,21 +14,23 @@ const run = (cmd, opts = {}) => {
   execSync(cmd, { stdio: 'inherit', shell: 'bash', cwd: ROOT, ...opts })
 }
 
-if (!existsSync(join(ROOT, 'dist/index.html'))) {
-  run('npm run build')
-}
+// Always rebuild — a stale dist/ must never be deployed
+run('npm run build')
 
-// Fresh (or reused) orphan worktree — keeps the main working tree untouched
+// Fresh worktree — keeps the main working tree untouched.
+// First deploy: create an orphan gh-pages branch; later deploys reuse it.
 if (existsSync(WT)) run(`git worktree remove --force "${WT}"`)
 try { run('git worktree prune') } catch { /* ignore */ }
-run(`git worktree add --orphan -b gh-pages "${WT}"`)
+run(`git show-ref --verify --quiet refs/heads/gh-pages && git worktree add "${WT}" gh-pages || git worktree add --orphan -b gh-pages "${WT}"`)
 
 // Replace worktree content with the build output
 for (const entry of readdirSync(WT)) {
   if (entry === '.git') continue
   rmSync(join(WT, entry), { recursive: true, force: true })
 }
-cpSync(join(ROOT, 'dist'), WT, { recursive: true })
+for (const entry of readdirSync(join(ROOT, 'dist'))) {
+  cpSync(join(ROOT, 'dist', entry), join(WT, entry), { recursive: true })
+}
 run(`git -C "${WT}" add -A`)
 run(`git -C "${WT}" commit -m "deploy: build ${new Date().toISOString().slice(0, 16).replace('T', ' ')}"`)
 
