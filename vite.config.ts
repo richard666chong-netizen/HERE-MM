@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   // GitHub Pages serves project sites under /<repo-name>/ — keep in sync with the repo name
-  base: '/here-mapmatching-poc/',
+  base: '/HERE-MM/',
   plugins: [react()],
   test: {
     environment: 'jsdom',

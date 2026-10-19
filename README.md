@@ -1,6 +1,6 @@
 # HERE Trace-Matching POC
 
-**Live demo:** https://&lt;github-user&gt;.github.io/here-mapmatching-poc/ *(link activated on first deploy)*
+**Live demo:** https://richard666chong-netizen.github.io/HERE-MM/
 
 **A buyer's-view evaluation harness for HERE cloud trace matching under GNSS degradation — real KITTI drives, OEM acceptance metrics, and an honest measurement of where the correction stops working.**
 
