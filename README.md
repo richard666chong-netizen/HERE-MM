@@ -1,5 +1,7 @@
 # HERE Trace-Matching POC
 
+**Live demo:** https://&lt;github-user&gt;.github.io/here-mapmatching-poc/ *(link activated on first deploy)*
+
 **A buyer's-view evaluation harness for HERE cloud trace matching under GNSS degradation — real KITTI drives, OEM acceptance metrics, and an honest measurement of where the correction stops working.**
 
 ![Analysis view — drive 0042, 30 s simulated GNSS denial, LIVE matching](docs/img/analysis-view.png)
@@ -67,7 +69,7 @@ Measured on `2011_10_03_drive_0042` (highway, 79.6 km/h average) with the denial
 
 ## Data and honesty
 
-- **Source:** KITTI raw dataset, `oxts` channel — OXTS RT3000 GNSS+IMU, 10 Hz, WGS-84, Karlsruhe. No coordinate conversion (HERE is native WGS-84).
+- **Source:** KITTI raw dataset, `oxts` channel — OXTS RT3000 GNSS+IMU, 10 Hz, WGS-84, Karlsruhe (CC BY-NC-SA 3.0; non-commercial evaluation use, attribution given). No coordinate conversion (HERE is native WGS-84).
 - **Why the tunnel is simulated:** an exhaustive scan of all 156 KITTI raw drives (camera-frame verified) found **no tunnels** — the longest real outages are urban canyon, tree canopy and a pedestrian zone. Rather than pretend, the denial duration is an explicit, UI-visible scenario parameter.
 - **The DR is deliberately simple:** heading + speed integration with 1 Hz GNSS correction (gain 0.3), gated by satellite count and fix availability. It runs on OXTS-processed outputs, i.e. simplified dead reckoning *on top of* a professional INS — the harness measures matching behavior, not DR quality. An ESKF/strapdown upgrade path is documented but intentionally out of scope.
 - **OXTS output is not independent ground truth** (it is INS-bridged during outages, not RTK). The DR-drift metric compares two algorithms on the same sensor suite, and the docs say so.

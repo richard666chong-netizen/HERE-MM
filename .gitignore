@@ -9,3 +9,19 @@ data/
 node_modules/
 dist/
 .env
+
+# Secrets — no env file of any flavor enters history
+.env.*
+
+# Personal job-search workspace (not part of the portfolio)
+CV and JD/
+progress.md
+task_plan.md
+findings.md
+docs/interview-challenges-and-lessons.md
+HERE-POC-MapMatching-*.html
+here-*.json
+here-*.txt
+waf-*.png
+scripts/scrape-here-china.mjs
+scripts/probe-here-all.mjs
