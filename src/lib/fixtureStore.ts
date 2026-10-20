@@ -5,6 +5,17 @@ import type { CacheEntry, TrajPoint } from '../types'
  *  缓存里的 trackArcM 与新轨道弧长表错位——升版本强制重派生，旧键成为孤儿（清除缓存按钮可扫尾） */
 const CACHE_VERSION = 'v4'
 
+/** mock 缓存 TTL（2026-10-20 锐边修复，用户拍板方案 A）：live 失败落 fixture 的缓存条目超 24h 视为无缓存，
+ *  下次加载自动重试 live（成功即转正回 LIVE）。live 源条目永不过期——一次成功永久命中，不再打 API。 */
+const MOCK_CACHE_TTL_MS = 24 * 3600 * 1000
+
+/** mock 条目是否已过 TTL。createdAt 非法（空串/坏格式）视为过期——偏向重试 live，而非永远吃存疑缓存。 */
+function isMockCacheStale(entry: CacheEntry): boolean {
+  const t = new Date(entry.createdAt).getTime()
+  if (Number.isNaN(t)) return true
+  return Date.now() - t > MOCK_CACHE_TTL_MS
+}
+
 export function cacheKey(driveId: string, variant = ''): string {
   return variant ? `here-mm-cache:${CACHE_VERSION}:${driveId}:${variant}` : `here-mm-cache:${CACHE_VERSION}:${driveId}`
 }
@@ -58,7 +69,8 @@ export async function matchService(
   variant = '',
 ): Promise<CacheEntry> {
   const cached = readCache(driveId, variant)
-  if (cached) return cached
+  // live 条目：任何年龄都直接命中。mock 条目：24h 内免打扰（不打 API），超期重试 live 自愈
+  if (cached && (cached.source === 'live' || !isMockCacheStale(cached))) return cached
   if (opts) {
     try {
       const response = await importRoute(opts.apikey, opts.trace)

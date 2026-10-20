@@ -134,7 +134,9 @@ export default function App() {
         let derived = entry.derived
         if (derived.length === 0 || derived[0]?.trackArcM === undefined) {
           derived = derive(liveTrace, entry.response)
-          writeCache({ ...entry, derived }, variant)
+          // createdAt 一律刷成写入时刻：mock 条目的原值是录制当天（9 月），不刷会让 fixtureStore 的
+          // 24h TTL 立即过期、每次加载都重试 live。TTL 语义 = 失败后 24h 内免打扰、之后自愈重试（方案 A）
+          writeCache({ ...entry, derived, createdAt: new Date().toISOString() }, variant)
         }
         setData({ trace, gnssFeed, liveTrace, derived, driftM, entry: { ...entry, derived } })
       } catch (e) {

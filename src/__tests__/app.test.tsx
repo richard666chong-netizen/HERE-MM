@@ -123,6 +123,16 @@ describe('App (Step1 编排壳)', () => {
     expect(localStorage.getItem(cacheKey(driveId))).not.toBeNull()
   })
 
+  it('mock 回落回填的缓存条目 createdAt=写入时刻（24h TTL 的起点；防 fixture 录制日令 TTL 立即过期）', async () => {
+    render(<App />)
+    await screen.findByText('MOCK')
+    const entry = JSON.parse(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))!) as CacheEntry
+    expect(entry.source).toBe('mock')
+    const ageMs = Date.now() - new Date(entry.createdAt).getTime()
+    expect(ageMs).toBeGreaterThanOrEqual(0)
+    expect(ageMs).toBeLessThan(60_000) // 「刚才写入」≠ fixture 的 9 月录制日（约 5 周前）
+  })
+
   it('demo tab: replay bar + linked chart + car marker; switching back pauses', async () => {
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1)) // 不放帧：断言与时间解耦
     vi.stubGlobal('cancelAnimationFrame', vi.fn())

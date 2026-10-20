@@ -94,7 +94,9 @@ describe('loadFixture', () => {
 
 describe('matchService', () => {
   it('cache hit returns entry without touching fetch', async () => {
-    writeCache(entry0093)
+    // 契约变更（方案 A）：mock 源条目只有 <24h 才短路命中；真实 fixture 的 createdAt 是 9 月录制日，
+    // 原样入缓存会被判过期——刷成新鲜时间戳，本测试的意图（命中不打 fetch）由 fresh 分支承载
+    writeCache({ ...entry0093, createdAt: new Date().toISOString() })
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     await expect(matchService('2011_09_26_drive_0093')).resolves.toEqual(expect.objectContaining({ driveId: '2011_09_26_drive_0093' }))
@@ -163,6 +165,97 @@ describe('matchService live 分支', () => {
   it('cache hit: live fetch never called', async () => {
     const fn = stubFetch({ 'https://router.hereapi.com': LIVE_RESPONSE })
     writeCache({ driveId: '2011_09_26_drive_0093', source: 'live', createdAt: '', response: LIVE_RESPONSE as never, derived: [] })
+    const entry = await matchService('2011_09_26_drive_0093', { apikey: 'k', trace: TRACE })
+    expect(entry.source).toBe('live')
+    expect(fn).not.toHaveBeenCalled()
+  })
+})
+
+describe('matchService 自愈：mock 缓存 24h TTL（2026-10-20 锐边修复，用户拍板方案 A）', () => {
+  // 背景：live 失败落 fixture 的条目会被 App 回填进缓存，此后缓存命中短路、永远 MOCK 直到手动清除——
+  // 「一次瞬断永久钉死」。本组测试锁 TTL 语义：mock 条目超 24h 视为无缓存重试 live；live 条目永不过期。
+  const TTL_MS = 24 * 3600 * 1000
+  const fresh = (): string => new Date(Date.now() - 1000).toISOString()
+  const stale = (): string => new Date(Date.now() - TTL_MS - 1000).toISOString()
+
+  // 与 'matchService live 分支' describe 内同名常量保持同形（其作用于该 describe 内部，此处需本地副本）
+  const TRACE = [
+    { lat: 49.0, lng: 8.4, timestamp: 0, timestampUtc: '', headingDeg: 0, speedMps: 0, numsats: 7 },
+    { lat: 49.001, lng: 8.401, timestamp: 0.1, timestampUtc: '', headingDeg: 0, speedMps: 0, numsats: 7 },
+    { lat: 49.002, lng: 8.402, timestamp: 0.2, timestampUtc: '', headingDeg: 0, speedMps: 0, numsats: 7 },
+  ]
+  const REAL_POLYLINE = (fixture0093Fixture as unknown as { response: { routes: { sections: { polyline: string }[] }[] } }).response.routes[0].sections[0].polyline
+  const LIVE_RESPONSE = {
+    routes: [
+      { id: 'r', sections: [{ id: 's', type: 'vehicle', polyline: REAL_POLYLINE, summary: { duration: 1740, length: 1740 } }] },
+    ],
+  }
+  const MOCK_ENTRY: CacheEntry = {
+    driveId: '2011_09_26_drive_0093',
+    source: 'mock',
+    createdAt: '',
+    response: LIVE_RESPONSE as never, // 同 'matchService live 分支' 的写法：只验证调用路径，不构造完整 ImportResponse
+    derived: [],
+  }
+
+  function stubRouterOk() {
+    const fn = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      if (String(input).startsWith('https://router.hereapi.com')) {
+        return { ok: true, status: 200, json: async () => LIVE_RESPONSE } as Response
+      }
+      throw new Error(`unexpected fetch: ${String(input)}`)
+    })
+    vi.stubGlobal('fetch', fn)
+    return fn
+  }
+
+  it('mock 缓存未过期（<24h）：直接命中，不碰 fetch（24h 内免打扰）', async () => {
+    writeCache({ ...MOCK_ENTRY, createdAt: fresh() })
+    const fn = stubRouterOk()
+    const entry = await matchService('2011_09_26_drive_0093', { apikey: 'k', trace: TRACE })
+    expect(entry.source).toBe('mock')
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('mock 缓存过期（>24h）+ live 成功：重试 live → 返回 live 且缓存转正（自愈）', async () => {
+    writeCache({ ...MOCK_ENTRY, createdAt: stale() })
+    const fn = stubRouterOk()
+    const entry = await matchService('2011_09_26_drive_0093', { apikey: 'k', trace: TRACE })
+    expect(entry.source).toBe('live')
+    expect(fn).toHaveBeenCalledTimes(1)
+    const stored = JSON.parse(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))!)
+    expect(stored.source).toBe('live')
+  })
+
+  it('mock 缓存过期 + live 仍失败：落回 fixture（自愈未达成，行为不退化）', async () => {
+    writeCache({ ...MOCK_ENTRY, createdAt: stale() })
+    const fixtureEntry = { ...MOCK_ENTRY, createdAt: fresh() }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+        if (String(input).startsWith('https://router.hereapi.com')) {
+          return { ok: false, status: 503, json: async () => ({}) } as Response
+        }
+        if (String(input).startsWith(`${BASE}fixtures/`)) {
+          return { ok: true, status: 200, json: async () => fixtureEntry } as Response
+        }
+        throw new Error(`unexpected fetch: ${String(input)}`)
+      }),
+    )
+    const entry = await matchService('2011_09_26_drive_0093', { apikey: 'k', trace: TRACE })
+    expect(entry.source).toBe('mock')
+  })
+
+  it('mock 缓存 createdAt 非法：视为过期重试 live', async () => {
+    writeCache({ ...MOCK_ENTRY, createdAt: 'not-a-date' })
+    stubRouterOk()
+    const entry = await matchService('2011_09_26_drive_0093', { apikey: 'k', trace: TRACE })
+    expect(entry.source).toBe('live')
+  })
+
+  it('live 缓存无论多久远都直接命中（TTL 只管 mock 源；你确认的语义：live 一次成功永久 LIVE）', async () => {
+    writeCache({ driveId: '2011_09_26_drive_0093', source: 'live', createdAt: stale(), response: LIVE_RESPONSE as never, derived: [] })
+    const fn = stubRouterOk()
     const entry = await matchService('2011_09_26_drive_0093', { apikey: 'k', trace: TRACE })
     expect(entry.source).toBe('live')
     expect(fn).not.toHaveBeenCalled()
