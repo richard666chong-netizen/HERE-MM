@@ -50,7 +50,7 @@ interface HereMap {
   addObject(obj: unknown): void
   removeObject(obj: unknown): void
   setCenter(coord: { lat: number; lng: number }): void
-  setZoom(z: number): void
+  setZoom(z: number, animate?: boolean): void
   getZoom(): number
   getViewModel(): { setLookAtData(data: { bounds?: unknown; zoom?: number; tilt?: number; heading?: number; position?: unknown }, animate?: boolean): void }
   getViewPort(): { resize(): void }
@@ -90,7 +90,16 @@ interface HereNS {
   }
   mapevents: {
     MapEvents: new (map: HereMap) => unknown
-    Behavior: new (events: unknown) => { dispose(): void }
+    Behavior: {
+      new (events: unknown): {
+        dispose(): void
+        /** 开关交互通道（H.mapevents.Behavior.WHEELZOOM 等静态 flag） */
+        disable(flags: number): void
+        enable(flags: number): void
+      }
+      /** 滚轮缩放通道开关 flag（HERE 3.1 静态常量） */
+      WHEELZOOM: number
+    }
   }
 }
 
@@ -219,6 +228,8 @@ export default function MapView({
   const endMarkerRef = useRef<HereMarker | null>(null)
   const triangleIconCacheRef = useRef(new Map<string, unknown>())
   const carMarkerRef = useRef<HereMarker | null>(null)
+  const behaviorRef = useRef<{ dispose(): void; disable(flags: number): void; enable(flags: number): void } | null>(null)
+  const playingRef = useRef(playing) // wheel 监听在建图期一次性挂载，读 ref 拿最新播放态
 
   // 建图 + 匹配路径（全量）+ 视野适配。声明顺序保证本 effect 先于喷洒/车标 effect 运行。
   useEffect(() => {
@@ -231,6 +242,19 @@ export default function MapView({
     })
     // 拖拽/滚轮缩放交互（navigator 缩放）
     const behavior = new here.mapevents.Behavior(new here.mapevents.MapEvents(map))
+    behaviorRef.current = behavior
+    // 播放中滚轮缩放走「无动画步进」：原生 WHEELZOOM 是动画式缩放，被跟随相机的每帧
+    // setLookAtData 打断（2026-10-20 探针：播放 8 格 +0.27 vs 暂停 +3.6）——zoom 值不丢
+    // （P16 不传 zoom）但动画永不完结。wheel 监听同步 setZoom(±0.5, animate=false)：立即生效，
+    // 下一帧 follow 不携带 zoom → 无从打断。暂停态交还原生动画缩放（该路径实测健康）。
+    if (playing) behavior.disable(here.mapevents.Behavior.WHEELZOOM)
+    const hostEl = hostRef.current
+    const onWheel = (e: WheelEvent) => {
+      if (!playingRef.current) return
+      e.preventDefault()
+      map.setZoom(map.getZoom() + (e.deltaY < 0 ? 0.5 : -0.5), false)
+    }
+    hostEl.addEventListener('wheel', onWheel, { passive: false })
     mapRef.current = map
     sprayedRef.current = []
     objRef.current = []
@@ -341,7 +365,9 @@ export default function MapView({
     return () => {
       resizeObs?.disconnect()
       window.removeEventListener('resize', onResize)
+      hostEl.removeEventListener('wheel', onWheel)
       behavior.dispose()
+      behaviorRef.current = null
       map.dispose() // HERE 3.1 的正确清理入口（连同引擎资源一并释放）
       mapRef.current = null
       sprayedRef.current = []
@@ -352,6 +378,17 @@ export default function MapView({
       carMarkerRef.current = null
     }
   }, [here, apikey, trace, derived, drPath, showMm])
+
+  // 播放态切换：同步 wheel 通道（禁用=自定义无动画步进 / 启用=原生动画缩放，见建图 effect）。
+  // 建图 effect 重建 behavior 时已按当时的 playing 同步过一次（闭包即最新渲染值），
+  // 本 effect 负责此后的一切 playing 变化。
+  useEffect(() => {
+    playingRef.current = playing
+    const b = behaviorRef.current
+    if (!here || !b) return
+    if (playing) b.disable(here.mapevents.Behavior.WHEELZOOM)
+    else b.enable(here.mapevents.Behavior.WHEELZOOM)
+  }, [here, playing])
 
   // GNSS 喷洒：sprayPlan 纯函数算增量（前进补洒/回退回收），本 effect 只做对象映射。
   // ⚠ 无 cleanup（评审 blocker 修正）：React 在每次依赖变化时都先跑上一轮 cleanup，

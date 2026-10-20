@@ -14,7 +14,7 @@
 | **S−** | 多因叠加互相伪装，需系统性排除 + 多轮量化测量 | P5 |
 | **A** | 根因明确但藏在"信任的抽象"（引擎/框架契约）里，且修复过程自带回归 | P7、P8 |
 | **B** | 隐蔽但有干净的验证通道（对照数据/契约测试），一次锁定 | P1、P3、P10、P11 |
-| **C+** | 小修但有值得记录的教训 | P6、P12、P13、P15、P16 |
+| **C+** | 小修但有值得记录的教训 | P6、P12、P13、P15、P16、P17 |
 | **C** | 常规小修，直觉即达 | P2、P4、P14 |
 
 ---
@@ -135,6 +135,14 @@
 - **修复**：宿主高条件化（Demo 134% / Analysis 100%）+ bounds 纳入全部 6 层 + 去掉 zoom 下限 + bounds 四周扩 8% 余量。~18 行，~30min。
 - **教训**：为一个模式设计的全局参数（134% 宿主高 / zoom 下限）在另一个模式下会变成 bug——模式特有参数要条件化，不能无差别应用。bounds 计算要覆盖全部图层，否则任一图层的远点都会被初始视野裁剪。
 
+### P17【C+】播放中滚轮缩放失效（10-20）
+
+- **症状**：Demo 播放中滚轮缩放几乎无效（8 格 +0.27）；暂停正常（+3.6）。线上报障，本地复现。
+- **根因**：播放跟随的每帧 `setLookAtData({position,heading}, false)`（60Hz）打断原生 `Behavior.WHEELZOOM` 的动画式缩放——动画进程被每帧视模型重置丢弃。zoom 值不丢（P16 不传 zoom 已修 snap-back），但动画永不完结。P16 同族残余：当时只验了调用参数（不传 zoom），没验进程（动画走不完）。
+- **修复**：播放中 `disable(WHEELZOOM)` + 自定义 wheel 监听走无动画 `setZoom(±0.5, animate=false)` 同步步进；暂停 `enable` 还原原生动画缩放。~15 行，~2h（Playwright 探针定量：修复后播放 +3.87 / 暂停 +5.0，dev 与线上逐项一致）。
+- **教训**：**「值正确 ≠ 交互健康」**——引擎动画由异步进程执行，每帧写视模型的调用会把一切在途动画归零。修复值类症状后必须对同一交互做端到端数值验收（合成 N 格输入 → 读 `getLookAtData().zoom` 真值），不能只停在调用参数断言。
+- **防线**：`mapview.test.tsx` 播放中 wheel → setZoom 步进（±0.5，animate=false）+ Behavior disable/enable 随 playing 切换，3 个接线测试。
+
 ---
 
 ## 横向元教训（跨问题模式）
@@ -167,6 +175,7 @@
 | fixture variant 分档 | `fixtureStore.test.ts` variant 优先/fallback/全失败 |
 | bounds 全图层覆盖 + 8% 余量 | MapView.tsx bounds 计算（6 层全覆盖） |
 | 宿主高模式条件化 | MapView.tsx `carPos !== undefined ? '134%' : '100%'` |
+| 播放中 wheel 无动画步进 + WHEELZOOM 随 playing 开关 | `mapview.test.tsx` 3 接线测试（步进值/animate=false/切换） |
 
 ## 未决事项（非本档范围，见 task_plan/progress）
 

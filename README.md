@@ -37,7 +37,7 @@ npm run dev                              # LIVE badge; responses cached to local
 | Script | Purpose |
 |---|---|
 | `npm run dev` | Dev server; fixture mode without a key, live mode with one |
-| `npm test` | 174 tests / 20 files (Vitest) — unit + contract tests pinning the HERE response schema |
+| `npm test` | 177 tests / 20 files (Vitest) — unit + contract tests pinning the HERE response schema |
 | `npm run build` | Production bundle — ships a **Trusted-Domains-restricted** HERE key (see below) |
 | `npm run shot` | Recapture the README screenshots headlessly (system Edge/Chrome via playwright-core) |
 | `npm run record:dr -- <driveId> [--tunnel 30]` | Re-record a fixture from the live API with the DR-augmented trace |
@@ -88,7 +88,7 @@ KITTI oxts trace (10 Hz, WGS-84)
 
 - **Stack:** Vite 7 · React 19 · TypeScript · Recharts. HERE Maps API for JavaScript 3.1 loaded via script tag with a self-built loader (no HERE npm SDK) — including a **basemap tile probe**, because enterprise networks can silently drop tiles while the SDK script loads fine.
 - **Offline-first, four layers deep:** live API → localStorage cache (keyed per drive *and* tunnel variant) → bundled fixture (recorded from the live API) → SVG no-basemap fallback. The demo cannot die of network conditions.
-- **Testing:** 174 Vitest tests, including contract tests that fail if the HERE response schema drifts, and regression locks pinning the measured drift values (e.g. 0042 @60 s → 66.86 m).
+- **Testing:** 177 Vitest tests, including contract tests that fail if the HERE response schema drifts, and regression locks pinning the measured drift values (e.g. 0042 @60 s → 66.86 m).
 
 ## From POC to production (solution-architect notes)
 

@@ -204,15 +204,29 @@ describe('MapView heading-up：引擎原生相机航向（mapStatus=ok，假 H�
     bounds?: unknown
     zoom?: number
   }
-  function installFakeH(): LookAtCall[] {
+  interface BehaviorOp {
+    op: 'disable' | 'enable'
+    flag: number
+  }
+  interface ZoomCall {
+    z: number
+    animate: boolean | undefined
+  }
+  function installFakeH(): { lookAt: LookAtCall[]; behaviorOps: BehaviorOp[]; zoomCalls: ZoomCall[] } {
     const lookAt: LookAtCall[] = []
+    const behaviorOps: BehaviorOp[] = []
+    const zoomCalls: ZoomCall[] = []
+    let zoom = 17
     class FakeMap {
       addObject(): void {}
       removeObject(): void {}
       setCenter(): void {}
-      setZoom(): void {}
+      setZoom(z: number, animate?: boolean): void {
+        zoomCalls.push({ z, animate })
+        zoom = z
+      }
       getZoom(): number {
-        return 17
+        return zoom
       }
       getViewModel(): { setLookAtData(data: LookAtCall): void } {
         return { setLookAtData: (d: LookAtCall) => lookAt.push(d) }
@@ -225,7 +239,16 @@ describe('MapView heading-up：引擎原生相机航向（mapStatus=ok，假 H�
     ;(window as unknown as { H: unknown }).H = {
       service: { Platform: class { createDefaultLayers() { return { vector: { normal: { map: {} } } } } } },
       Map: FakeMap,
-      mapevents: { MapEvents: class {}, Behavior: class { dispose(): void {} } },
+      mapevents: {
+        MapEvents: class {},
+        // 假 Behavior：静态 WHEELZOOM 为假值 4，测试只断言 disable/enable 收到的 flag === 此值
+        Behavior: class {
+          static WHEELZOOM = 4
+          dispose(): void {}
+          disable(flag: number): void { behaviorOps.push({ op: 'disable', flag }) }
+          enable(flag: number): void { behaviorOps.push({ op: 'enable', flag }) }
+        },
+      },
       map: {
         Polyline: class {},
         Marker: class { setGeometry(): void {} setIcon(): void {} addEventListener(): void {} },
@@ -244,14 +267,14 @@ describe('MapView heading-up：引擎原生相机航向（mapStatus=ok，假 H�
         },
       },
     }
-    return lookAt
+    return { lookAt, behaviorOps, zoomCalls }
   }
   afterEach(() => {
     delete (window as unknown as { H?: unknown }).H
   })
 
   it('建图期视野适配即带 heading=180：analysis 模式无相机跟随，地图须为真北向上（引擎定律 R=180−h，h=0 渲染南向上）', () => {
-    const lookAt = installFakeH()
+    const { lookAt } = installFakeH()
     const trace = [tp(49.0, 8.4, 0, 0), tp(49.0, 8.401, 0, 0.1)]
     const derived = [dp(0, 49.0, 8.4), dp(1, 49.001, 8.4015)]
     render(
@@ -264,7 +287,7 @@ describe('MapView heading-up：引擎原生相机航向（mapStatus=ok，假 H�
   })
 
   it('Heading Up：setLookAtData 收到 heading=(compass+180)%360 且宿主无 CSS transform；切回北向上 heading=180（引擎定律 R=180−h）', () => {
-    const lookAt = installFakeH()
+    const { lookAt } = installFakeH()
     // yaw=180 → compass=270（yawToCompassDeg=(90−yaw)%360）：判别性取值——错误实现发 270、
     // 正确应为 90；yaw=90（compass=0）是退化值（(360−0)%360=0），无法区分两种实现（假绿教训）
     const trace = [tp(49.0, 8.4, 180, 0), tp(49.0, 8.401, 180, 0.1), tp(49.0, 8.402, 180, 0.2)]
@@ -302,5 +325,55 @@ describe('MapView heading-up：引擎原生相机航向（mapStatus=ok，假 H�
     const firstAfterCar = after.find((c) => c.position !== undefined)
     expect(firstAfterCar).toBeTruthy()
     expect(firstAfterCar!.position).toMatchObject({ lat: trace[1].lat, lng: trace[1].lng })
+  })
+
+  // 2026-10-20 Phase 11：播放中滚轮缩放失效（探针定量：播放 8 格 +0.27 vs 暂停 +3.6）。
+  // 根因：每帧跟随 setLookAtData 打断原生 WHEELZOOM 缩放动画。修法=播放中禁用原生通道，
+  // 自建 wheel 监听走无动画 setZoom 步进（同步生效，follow 帧不携带 zoom → 无从打断）。
+  function setupPlayback(playing: boolean | undefined) {
+    const fake = installFakeH()
+    const trace = [tp(49.0, 8.4, 0, 0), tp(49.01, 8.405, 0, 0.1)]
+    const derived = [dp(0, 49.0, 8.4), dp(1, 49.01, 8.405)]
+    const utils = render(
+      <MapView trace={trace} derived={derived} mapStatus="ok" apikey="k" carPos={1} carTrace={trace} playing={playing} />,
+    )
+    const host = utils.container.querySelector('[data-testid="map-host"]') as HTMLElement
+    return { ...fake, ...utils, host, trace, derived }
+  }
+
+  it('播放中：禁用原生 WHEELZOOM；wheel 走无动画 setZoom 步进（±0.5，animate=false）', () => {
+    const { behaviorOps, zoomCalls, host } = setupPlayback(true)
+    expect(behaviorOps.filter((o) => o.op === 'disable' && o.flag === 4).length).toBeGreaterThan(0)
+    fireEvent.wheel(host, { deltaY: -120 })
+    fireEvent.wheel(host, { deltaY: -120 })
+    fireEvent.wheel(host, { deltaY: 120 })
+    // 17 → 17.5 → 18 → 17.5：每次从上一次结果步进（判别于「固定目标值」型错误实现）
+    expect(zoomCalls.map((c) => c.z)).toEqual([17.5, 18, 17.5])
+    // 无动画同步生效是修复的机理核心：animate 必须为 false（undefined 则退回引擎默认动画 → 假绿）
+    expect(zoomCalls.every((c) => c.animate === false)).toBe(true)
+  })
+
+  it('暂停：原生 WHEELZOOM 启用；wheel 不触发 setZoom（交还原生动画缩放）', () => {
+    const { behaviorOps, zoomCalls, host } = setupPlayback(false)
+    expect(behaviorOps.filter((o) => o.op === 'enable' && o.flag === 4).length).toBeGreaterThan(0)
+    fireEvent.wheel(host, { deltaY: -120 })
+    expect(zoomCalls).toHaveLength(0)
+  })
+
+  it('playing 切换：播放→暂停 enable 原生通道且 wheel 不再步进；暂停→播放再 disable', () => {
+    const { behaviorOps, zoomCalls, host, trace, derived, rerender } = setupPlayback(true)
+    rerender(
+      <MapView trace={trace} derived={derived} mapStatus="ok" apikey="k" carPos={1} carTrace={trace} playing={false} />,
+    )
+    expect(behaviorOps[behaviorOps.length - 1]).toEqual({ op: 'enable', flag: 4 })
+    fireEvent.wheel(host, { deltaY: -120 })
+    expect(zoomCalls).toHaveLength(0)
+
+    rerender(
+      <MapView trace={trace} derived={derived} mapStatus="ok" apikey="k" carPos={1} carTrace={trace} playing />,
+    )
+    expect(behaviorOps[behaviorOps.length - 1]).toEqual({ op: 'disable', flag: 4 })
+    fireEvent.wheel(host, { deltaY: -120 })
+    expect(zoomCalls.map((c) => c.z)).toEqual([17.5])
   })
 })
