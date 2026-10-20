@@ -14,10 +14,11 @@ import { buildMatchedTrack } from './lib/matchedTrack'
 import { loadHereMaps, probeBasemap } from './lib/hereLoader'
 import type { CacheEntry, DerivedPoint, TrajPoint } from './types'
 
-// 顶栏下拉顺序：退化 0093（真值不可信）→ 退化 0096/0106（真值可信，posmode 失锁）→ 0042（仿真隧道宿主）
+// 顶栏下拉顺序（首项 = 默认）：0096（林荫道真实失锁 34.3s、真值可信——demo 首屏）
+// → 0093（真值不可信的压力用例）→ 0106（真值可信，posmode 失锁）→ 0042（仿真隧道宿主）
 const DRIVE_IDS = [
-  '2011_09_26_drive_0093',
   '2011_09_26_drive_0096',
+  '2011_09_26_drive_0093',
   '2011_09_26_drive_0106',
   '2011_10_03_drive_0042',
 ] // 0042 压末尾：仿真隧道宿主（高速，60s 拒止 → 横向漂移 58.6m）

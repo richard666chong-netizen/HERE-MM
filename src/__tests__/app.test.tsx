@@ -15,6 +15,7 @@ import trace0093 from '../../public/sample/here/2011_09_26_drive_0093.json'
 import trace0096 from '../../public/sample/here/2011_09_26_drive_0096.json'
 import trace0042 from '../../public/sample/here/2011_10_03_drive_0042.json'
 import fixture0093 from '../../public/fixtures/2011_09_26_drive_0093.json'
+import fixture0096 from '../../public/fixtures/2011_09_26_drive_0096.json'
 
 // 有 key 时 App 会调 loader + 底图探测：mock 掉防 script 注入/8s 超时（hoisted，空 key 用例本就不被调，零影响）。
 // probeBasemap 缺省 true = 与接线前行为一致（mapStatus 仍为 'ok'），既有用例零回归。
@@ -31,6 +32,7 @@ const TRACES: Record<string, unknown> = {
 }
 const FIXTURES: Record<string, unknown> = {
   '2011_09_26_drive_0093': fixture0093,
+  '2011_09_26_drive_0096': fixture0096,
 }
 
 function jsonResponse(data: unknown): Response {
@@ -70,11 +72,11 @@ describe('App (Step1 编排壳)', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders header: POC title + drive selector with 0093/0096', async () => {
+  it('renders header: POC title + drive selector; default drive is 0096', async () => {
     render(<App />)
     expect(screen.getByRole('heading', { name: 'HERE Map Matching POC' })).toBeTruthy()
     const select = screen.getByRole('combobox', { name: 'Trajectory' }) as HTMLSelectElement
-    expect(select.value).toBe('2011_09_26_drive_0093') // 默认选中 0093
+    expect(select.value).toBe('2011_09_26_drive_0096') // 默认选中 0096（林荫道真实失锁、真值可信——demo 首屏）
     expect(screen.getByRole('option', { name: /0093/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /0096/ })).toBeTruthy()
     // 等待异步取数完成，让挂起的状态更新落在 act 内（防 update-not-wrapped-in-act 噪声）
@@ -87,8 +89,8 @@ describe('App (Step1 编排壳)', () => {
 
     // StatsPanel 汇总数字 = 同一份数据经 derive/deviationStats 的精确期望值（接线正确性）
     // Mock 模式下 DR 也运行：偏差 = DR 结果 → fixture MM
-    const trace = trace0093 as unknown as TrajPoint[]
-    const entry = fixture0093 as unknown as CacheEntry
+    const trace = trace0096 as unknown as TrajPoint[]
+    const entry = fixture0096 as unknown as CacheEntry
     const feed = buildGnssFeed(trace)
     const drPos = deadReckon(feed).positions
     const liveTrace = feed.map((p, i) => ({ ...p, lat: drPos[i][0], lng: drPos[i][1] }))
@@ -113,7 +115,7 @@ describe('App (Step1 编排壳)', () => {
   it('clear-cache button removes the here-mm-cache key for current drive', async () => {
     render(<App />)
     await screen.findByText('MOCK')
-    const driveId = '2011_09_26_drive_0093'
+    const driveId = '2011_09_26_drive_0096'
     expect(localStorage.getItem(cacheKey(driveId))).not.toBeNull() // 未缓存加载后已回填
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear Cache' }))
@@ -126,7 +128,7 @@ describe('App (Step1 编排壳)', () => {
   it('mock 回落回填的缓存条目 createdAt=写入时刻（24h TTL 的起点；防 fixture 录制日令 TTL 立即过期）', async () => {
     render(<App />)
     await screen.findByText('MOCK')
-    const entry = JSON.parse(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))!) as CacheEntry
+    const entry = JSON.parse(localStorage.getItem(cacheKey('2011_09_26_drive_0096'))!) as CacheEntry // 默认轨迹 0096
     expect(entry.source).toBe('mock')
     const ageMs = Date.now() - new Date(entry.createdAt).getTime()
     expect(ageMs).toBeGreaterThanOrEqual(0)
@@ -149,9 +151,9 @@ describe('App (Step1 编排壳)', () => {
     expect(screen.getByRole('tab', { name: 'Demo' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByText('Deviation Histogram')).toBeTruthy() // 统一面板：demo 同样显示
     expect(screen.getByTestId('current-deviation')).toBeTruthy() // 切片态红字读数在
-    const trace = trace0093 as unknown as TrajPoint[]
+    const trace = trace0096 as unknown as TrajPoint[]
     const slider = screen.getByRole('slider') as HTMLInputElement
-    expect(Number(slider.max)).toBe(trace.length - 1) // 432
+    expect(Number(slider.max)).toBe(trace.length - 1) // 385
     const totalSec = trace[trace.length - 1].timestamp
     expect(screen.getByTestId('replay-time').textContent).toContain(`${totalSec.toFixed(1)}s`)
     expect(screen.getByTestId('replay-deviation').textContent).toContain('m')
@@ -189,7 +191,7 @@ describe('App (Step1 编排壳)', () => {
 
   it('with key: live path lights LIVE badge; record button clears cache and reloads', async () => {
     vi.stubEnv('VITE_HERE_KEY', 'test-key')
-    const liveResponse = (fixture0093 as unknown as CacheEntry).response
+    const liveResponse = (fixture0096 as unknown as CacheEntry).response
     const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
       const url = String(input)
       if (url.startsWith('https://router.hereapi.com/v8/import')) {
@@ -205,15 +207,15 @@ describe('App (Step1 编排壳)', () => {
 
     render(<App />)
     expect(await screen.findByText('LIVE')).toBeTruthy() // live 调用成功 → 角标 LIVE
-    const stored = JSON.parse(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))!)
+    const stored = JSON.parse(localStorage.getItem(cacheKey('2011_09_26_drive_0096'))!)
     expect(stored.source).toBe('live')
 
     // 录制按钮：清当前缓存 → 重载（再次 live）
     fireEvent.click(screen.getByRole('button', { name: 'Record' }))
-    expect(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))).toBeNull() // 重载完成前键已消失
+    expect(localStorage.getItem(cacheKey('2011_09_26_drive_0096'))).toBeNull() // 重载完成前键已消失
     expect(await screen.findByText('LIVE')).toBeTruthy() // 重载后复亮
     // 重载确实发生（评审修正，防「只删缓存不重载」假绿）：键经 live 回填恢复 + live 端点共调 2 次
-    expect(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))).not.toBeNull()
+    expect(localStorage.getItem(cacheKey('2011_09_26_drive_0096'))).not.toBeNull()
     const liveCalls = fetchMock.mock.calls.filter(([u]) => String(u).startsWith('https://router.hereapi.com/v8/import')).length
     expect(liveCalls).toBe(2)
   })
@@ -247,7 +249,7 @@ describe('App (Step1 编排壳)', () => {
     )
     render(<App />)
     expect(await screen.findByText(/Load failed/i)).toBeTruthy()
-    expect(localStorage.getItem(cacheKey('2011_09_26_drive_0093'))).toBeNull() // live entry 已被驱逐
+    expect(localStorage.getItem(cacheKey('2011_09_26_drive_0096'))).toBeNull() // live entry 已被驱逐
   })
 
   // Step4 T4：DR 增强 live 匹配。0093 含失锁点 → live 请求 trace 用 DR 位置替换 lat/lng；
@@ -275,6 +277,8 @@ describe('App (Step1 编排壳)', () => {
     )
 
     render(<App />)
+    // 默认轨迹已是 0096，本用例锁 0093：显式切换后再断言请求体
+    fireEvent.change(screen.getByRole('combobox', { name: 'Trajectory' }), { target: { value: '2011_09_26_drive_0093' } })
     await screen.findByText('LIVE')
 
     const drPositions = deadReckon(t0093).positions
@@ -291,7 +295,7 @@ describe('App (Step1 编排壳)', () => {
   it('0096 live: DR-augmented trace from frozen GNSS feed (≠ 用原始 OXTS 递推的 body)', async () => {
     vi.stubEnv('VITE_HERE_KEY', 'test-key')
     const t0096 = trace0096 as unknown as TrajPoint[]
-    const liveResponse = (fixture0093 as unknown as CacheEntry).response
+    const liveResponse = (fixture0096 as unknown as CacheEntry).response
     let capturedBody: string | null = null
     vi.stubGlobal(
       'fetch',
@@ -362,6 +366,8 @@ describe('App (Step1 编排壳)', () => {
     )
 
     render(<App />)
+    // 默认轨迹已是 0096，本用例锁 0093：显式切换后再断言请求体
+    fireEvent.change(screen.getByRole('combobox', { name: 'Trajectory' }), { target: { value: '2011_09_26_drive_0093' } })
     await screen.findByText('LIVE')
 
     expect(detectOutages(t0093, 4).some(Boolean)).toBe(true)
@@ -402,7 +408,7 @@ describe('App (Step1 编排壳)', () => {
     })
     await screen.findByText('LIVE')
     fireEvent.change(screen.getByRole('combobox', { name: 'Tunnel' }), { target: { value: '60' } })
-    // 三次请求：初始 0093 → 换 0042（隧道仍关）→ 开隧道 60s（缓存按隧道时长分档 → 必然重取数）
+    // 三次请求：初始 0096（默认）→ 换 0042（隧道仍关）→ 开隧道 60s（缓存按隧道时长分档 → 必然重取数）
     await waitFor(() => expect(bodies.length).toBe(3))
 
     const feed = buildGnssFeed(t, { tunnelDurationS: 60 })
@@ -440,9 +446,12 @@ describe('App (Step1 编排壳)', () => {
     )
 
     render(<App />)
+    // 默认轨迹已是 0096，本用例锁 0093：显式切换后再开隧道
+    fireEvent.change(screen.getByRole('combobox', { name: 'Trajectory' }), { target: { value: '2011_09_26_drive_0093' } })
     await screen.findByText('LIVE')
     fireEvent.change(screen.getByRole('combobox', { name: 'Tunnel' }), { target: { value: '60' } })
-    await waitFor(() => expect(count).toBe(2))
+    // 三次 live 请求：初始 0096（默认）→ 切 0093 → 开隧道 60s（缓存按隧道时长分档 → 必然重取数）
+    await waitFor(() => expect(count).toBe(3))
     const feed = buildGnssFeed(t, { tunnelDurationS: 60 })
     const dr = deadReckon(feed).positions
     const expected = buildImportRequest(feed.map((p, i) => ({ ...p, lat: dr[i][0], lng: dr[i][1] })))
