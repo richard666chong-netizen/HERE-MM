@@ -38,11 +38,11 @@ npm run dev                              # LIVE badge; responses cached to local
 |---|---|
 | `npm run dev` | Dev server; fixture mode without a key, live mode with one |
 | `npm test` | 174 tests / 20 files (Vitest) — unit + contract tests pinning the HERE response schema |
-| `npm run build` | Production bundle — **keyless by design** (`.env.production` pins an empty key) |
+| `npm run build` | Production bundle — ships a **Trusted-Domains-restricted** HERE key (see below) |
 | `npm run shot` | Recapture the README screenshots headlessly (system Edge/Chrome via playwright-core) |
 | `npm run record:dr -- <driveId> [--tunnel 30]` | Re-record a fixture from the live API with the DR-augmented trace |
 
-Production builds never inline a credential: Vite bakes `VITE_*` vars into the JS bundle at build time, so a real key would leak the moment `dist/` is shared or deployed. The deployed app therefore always runs in fixture mode; live mode stays dev-only.
+The deployed build ships a real HERE key **on purpose**: it is locked by HERE **Trusted Domains** — server-side Referer validation restricted to this site's GitHub Pages domain (forged or absent Referers get 401; verified 2026-10-20). `scripts/deploy-pages.mjs` refuses to publish a non-empty `VITE_HERE_KEY` unless `ALLOW_PUBLIC_KEY=1` is set explicitly, so an unrestricted key can never reach `gh-pages` silently. Visitors on networks that block HERE assets still get the full offline chain: cached responses → bundled fixtures → SVG fallback.
 
 ## What you see
 
