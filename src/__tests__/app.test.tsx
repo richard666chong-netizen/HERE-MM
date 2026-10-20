@@ -37,6 +37,13 @@ function jsonResponse(data: unknown): Response {
   return { ok: true, status: 200, json: async () => data } as Response
 }
 
+// vite base 感知的 URL 匹配：运行时 fetch 的本地资源必须带 BASE_URL 前缀（2026-10-20 线上 404
+// 修复的回归锁——Pages 部署在 /HERE-MM/ 子路径，绝对路径 /sample 会打到域名根）。动态取
+// BASE_URL 而非硬编码，base 变更时测试语义不变。
+const BASE_RE = import.meta.env.BASE_URL.replace(/\//g, '\\/')
+const TRACE_URL_RE = new RegExp(`^${BASE_RE}sample\\/here\\/(.+)\\.json$`)
+const FIXTURE_URL_RE = new RegExp(`^${BASE_RE}fixtures\\/(.+)\\.json$`)
+
 describe('App (Step1 编排壳)', () => {
   beforeEach(() => {
     probeMock.mockReset()
@@ -49,9 +56,9 @@ describe('App (Step1 编排壳)', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input)
-        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        const mTrace = url.match(TRACE_URL_RE)
         if (mTrace) return jsonResponse(TRACES[mTrace[1]])
-        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        const mFixture = url.match(FIXTURE_URL_RE)
         if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
         throw new Error(`unexpected fetch: ${url}`)
       }),
@@ -178,9 +185,9 @@ describe('App (Step1 编排壳)', () => {
       if (url.startsWith('https://router.hereapi.com/v8/import')) {
         return { ok: true, status: 200, json: async () => liveResponse } as Response
       }
-      const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+      const mTrace = url.match(TRACE_URL_RE)
       if (mTrace) return jsonResponse(TRACES[mTrace[1]])
-      const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+      const mFixture = url.match(FIXTURE_URL_RE)
       if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
       throw new Error(`unexpected fetch: ${url}`)
     })
@@ -221,9 +228,9 @@ describe('App (Step1 编排壳)', () => {
         if (url.startsWith('https://router.hereapi.com/v8/import')) {
           return { ok: true, status: 200, json: async () => badLive } as Response
         }
-        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        const mTrace = url.match(TRACE_URL_RE)
         if (mTrace) return jsonResponse(TRACES[mTrace[1]])
-        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        const mFixture = url.match(FIXTURE_URL_RE)
         if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
         throw new Error(`unexpected fetch: ${url}`)
       }),
@@ -249,9 +256,9 @@ describe('App (Step1 编排壳)', () => {
           capturedBody = init?.body as string
           return { ok: true, status: 200, json: async () => liveResponse } as Response
         }
-        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        const mTrace = url.match(TRACE_URL_RE)
         if (mTrace) return jsonResponse(TRACES[mTrace[1]])
-        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        const mFixture = url.match(FIXTURE_URL_RE)
         if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
         throw new Error(`unexpected fetch: ${url}`)
       }),
@@ -284,9 +291,9 @@ describe('App (Step1 编排壳)', () => {
           capturedBody = init?.body as string
           return { ok: true, status: 200, json: async () => liveResponse } as Response
         }
-        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        const mTrace = url.match(TRACE_URL_RE)
         if (mTrace) return jsonResponse(TRACES[mTrace[1]])
-        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        const mFixture = url.match(FIXTURE_URL_RE)
         if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
         throw new Error(`unexpected fetch: ${url}`)
       }),
@@ -336,9 +343,9 @@ describe('App (Step1 编排壳)', () => {
           capturedBody = init?.body as string
           return { ok: true, status: 200, json: async () => liveResponse } as Response
         }
-        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        const mTrace = url.match(TRACE_URL_RE)
         if (mTrace) return jsonResponse(TRACES[mTrace[1]])
-        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        const mFixture = url.match(FIXTURE_URL_RE)
         if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
         throw new Error(`unexpected fetch: ${url}`)
       }),
@@ -371,9 +378,9 @@ describe('App (Step1 编排壳)', () => {
           bodies.push(init?.body as string)
           return { ok: true, status: 200, json: async () => liveResponse } as Response
         }
-        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        const mTrace = url.match(TRACE_URL_RE)
         if (mTrace) return jsonResponse(TRACES[mTrace[1]])
-        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        const mFixture = url.match(FIXTURE_URL_RE)
         if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
         throw new Error(`unexpected fetch: ${url}`)
       }),
@@ -414,9 +421,9 @@ describe('App (Step1 编排壳)', () => {
             json: async () => liveResp,
           } as Response
         }
-        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        const mTrace = url.match(TRACE_URL_RE)
         if (mTrace) return jsonResponse(TRACES[mTrace[1]])
-        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        const mFixture = url.match(FIXTURE_URL_RE)
         if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
         throw new Error(`unexpected fetch: ${url}`)
       }),
@@ -450,9 +457,9 @@ describe('App (Step1 编排壳)', () => {
             json: async () => liveResp,
           } as Response
         }
-        const mTrace = url.match(/^\/sample\/here\/(.+)\.json$/)
+        const mTrace = url.match(TRACE_URL_RE)
         if (mTrace) return jsonResponse(TRACES[mTrace[1]])
-        const mFixture = url.match(/^\/fixtures\/(.+)\.json$/)
+        const mFixture = url.match(FIXTURE_URL_RE)
         if (mFixture) return jsonResponse(FIXTURES[mFixture[1]])
         throw new Error(`unexpected fetch: ${url}`)
       }),

@@ -29,9 +29,12 @@ export function writeCache(entry: CacheEntry, variant = ''): void {
 
 export async function loadFixture(driveId: string, variant = ''): Promise<CacheEntry> {
   const suffix = variant ? `-${variant}` : ''
+  // BASE_URL 前缀（尾随斜杠）：vite base 子路径部署（Pages /HERE-MM/）下运行时 fetch 必须自带
+  // base，绝对路径打到域名根即 404（2026-10-20 线上实测）；base 为 '/' 时与旧路径逐字相同
+  const base = import.meta.env.BASE_URL
   const urls = suffix
-    ? [`/fixtures/${driveId}${suffix}.json`, `/fixtures/${driveId}.json`]
-    : [`/fixtures/${driveId}.json`]
+    ? [`${base}fixtures/${driveId}${suffix}.json`, `${base}fixtures/${driveId}.json`]
+    : [`${base}fixtures/${driveId}.json`]
   for (const url of urls) {
     try {
       const res = await fetch(url)

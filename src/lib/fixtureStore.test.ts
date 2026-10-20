@@ -7,6 +7,9 @@ import { cacheKey, loadFixture, matchService, readCache, writeCache } from './fi
 
 const entry0093 = f0093 as unknown as CacheEntry
 
+// vite base 前缀（2026-10-20 线上 404 修复的回归锁）：动态取值，base 变更时测试语义不变
+const BASE = import.meta.env.BASE_URL
+
 beforeEach(() => localStorage.clear())
 afterEach(() => vi.unstubAllGlobals())
 
@@ -39,7 +42,7 @@ describe('loadFixture', () => {
     vi.stubGlobal('fetch', fetchMock)
     const entry = await loadFixture('2011_09_26_drive_0093')
     expect(entry.response.routes[0].sections).toBeDefined()
-    expect(fetchMock).toHaveBeenCalledWith('/fixtures/2011_09_26_drive_0093.json')
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}fixtures/2011_09_26_drive_0093.json`)
   })
   it('variant fetches /fixtures/<driveId>-<variant>.json first', async () => {
     const fetchMock = vi.fn(async () => ({
@@ -49,7 +52,7 @@ describe('loadFixture', () => {
     }))
     vi.stubGlobal('fetch', fetchMock)
     await loadFixture('2011_10_03_drive_0042', 't60')
-    expect(fetchMock).toHaveBeenCalledWith('/fixtures/2011_10_03_drive_0042-t60.json')
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}fixtures/2011_10_03_drive_0042-t60.json`)
   })
   it('variant falls back to base fixture when variant file not found', async () => {
     const calls: string[] = []
@@ -63,7 +66,7 @@ describe('loadFixture', () => {
     )
     const entry = await loadFixture('2011_09_26_drive_0093', 't30')
     expect(entry.response.routes[0].sections).toBeDefined()
-    expect(calls).toEqual(['/fixtures/2011_09_26_drive_0093-t30.json', '/fixtures/2011_09_26_drive_0093.json'])
+    expect(calls).toEqual([`${BASE}fixtures/2011_09_26_drive_0093-t30.json`, `${BASE}fixtures/2011_09_26_drive_0093.json`])
   })
   it('all urls fail throws `fixture load failed: <driveId>-<variant>`', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })))
@@ -103,7 +106,7 @@ describe('matchService', () => {
     const entry = await matchService('2011_09_26_drive_0093')
     expect(entry.response.routes[0].sections).toBeDefined()
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledWith('/fixtures/2011_09_26_drive_0093.json')
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}fixtures/2011_09_26_drive_0093.json`)
   })
 })
 
@@ -147,7 +150,7 @@ describe('matchService live 分支', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
-        if (String(input).startsWith('/fixtures/')) {
+        if (String(input).startsWith(`${BASE}fixtures/`)) {
           return { ok: true, status: 200, json: async () => fixtureEntry } as Response
         }
         return { ok: false, status: 503, json: async () => ({}) } as Response

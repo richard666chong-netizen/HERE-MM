@@ -110,7 +110,9 @@ export default function App() {
     setLoading(true)
     async function load(): Promise<void> {
       try {
-        const traceRes = await fetch(`/sample/here/${driveId}.json`)
+        // BASE_URL 前缀（尾随斜杠）：Pages 子路径部署（/HERE-MM/）下绝对路径会打到域名根——
+        // 2026-10-20 线上 404 实测；base 为 '/' 时拼接结果与旧路径逐字相同
+        const traceRes = await fetch(`${import.meta.env.BASE_URL}sample/here/${driveId}.json`)
         if (!traceRes.ok) throw new Error(`trace load failed: ${driveId}`)
         const trace = (await traceRes.json()) as TrajPoint[]
         // DR 始终运行：无退化时 DR 在 1Hz GNSS 纠正间做 10Hz 插值，
