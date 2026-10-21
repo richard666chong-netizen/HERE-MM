@@ -1,0 +1,56 @@
+{
+  "driveId": "2011_10_03_drive_0042",
+  "source": "mock",
+  "createdAt": "2026-09-14T07:03:26.129Z",
+  "response": {
+    "routes": [
+      {
+        "id": "a628a20e-c9cd-4c47-b1e2-f195192a1dfb",
+        "sections": [
+          {
+            "id": "44852527-814d-470e-b58f-71ba39c33e33",
+            "type": "vehicle",
+            "departure": {
+              "time": "2026-09-14T09:00:42+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.0067189,
+                  "lng": 8.4893687
+                },
+                "originalLocation": {
+                  "lat": 49.0067189,
+                  "lng": 8.48937
+                }
+              }
+            },
+            "arrival": {
+              "time": "2026-09-14T09:02:49+02:00",
+              "place": {
+                "type": "place",
+                "location": {
+                  "lat": 49.015665,
+                  "lng": 8.4658729
+                },
+                "originalLocation": {
+                  "lat": 49.0156647,
+                  "lng": 8.4658738
+                }
+              }
+            },
+            "summary": {
+              "duration": 127,
+              "length": 2594,
+              "baseDuration": 123
+            },
+            "polyline": "BG-nkv9Cy5kmQRC3D7B7B7BjD_EnB3DnBzFnBjNoGrsB4I3wBoLrsBwMzoBoQnpB0KvWwH3N4N3XsO7aoVnkB0UzjB41Bv8C46BroDsYnuBwWztBwHrO4X_sBkN_YoQ3hB8LnV0P7kBkX_xBkpCr4FoarlC4rB7jEkI_YoQ7uB0F7QgF3NkDvM8L_iBsO7pBkIzPkIrJsEjDsE7BsET0FUgFoBsEwC4DkDoG4IsEoLkD8QoB4SU8kBnB0PnBoGrE0K7BkD_EsEjI4DjDA7G7BzFjDjNrJrOzP_TnV5bxc",
+            "transport": {
+              "mode": "car"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "derived": []
+}
